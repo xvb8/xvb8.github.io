@@ -173,6 +173,12 @@
     color: var(--active);
   }
 
+  .sound-btn svg {
+    width: 16px;
+    height: 16px;
+    display: block;
+  }
+
   .sound-btn:hover {
     color: var(--active-light);
   }
@@ -912,6 +918,17 @@ function toggleSound() {
   void saveTimerState();
 }
 
+function soundIconMarkup(isEnabled) {
+  const slash = isEnabled
+    ? ''
+    : '<path d="M2.5 2.5l11 11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>';
+  return `<svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+    <path d="M8 2.25c-1.93 0-3.5 1.57-3.5 3.5v1.18c0 .43-.14.85-.41 1.19L2.7 9.88c-.3.36-.37.85-.17 1.28.2.43.62.7 1.09.7h8.76c.47 0 .89-.27 1.09-.7.2-.43.13-.92-.17-1.28l-1.39-1.69c-.27-.34-.41-.76-.41-1.19V5.75c0-1.93-1.57-3.5-3.5-3.5z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+    <path d="M6.2 13.1c.33.63.99 1.05 1.8 1.05.81 0 1.47-.42 1.8-1.05" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+    ${slash}
+  </svg>`;
+}
+
 function signedOutMarkup() {
   if (!getCloudConfig()) {
     return 'Cloud backend not configured. Fill in cloud-config.js and apply the README setup steps.';
@@ -988,7 +1005,7 @@ function render() {
           : `<button class="btn btn-primary" id="play-btn" onclick="startTimer()">▶ ${state.elapsed > 0 || state.current > 0 ? 'Resume' : 'Start'}</button>`}
         <button class="btn" onclick="skipTimer()">Skip →</button>
         <button class="btn btn-ghost" onclick="resetAll()">↺ Reset all</button>
-        <button class="btn btn-ghost sound-btn${state.sound ? '' : ' muted'}" onclick="toggleSound()">${state.sound ? '🔔' : '🔕'}</button>
+        <button class="btn btn-ghost sound-btn${state.sound ? '' : ' muted'}" onclick="toggleSound()" title="${state.sound ? 'Mute sound' : 'Enable sound'}" aria-label="${state.sound ? 'Mute sound' : 'Enable sound'}">${soundIconMarkup(state.sound)}</button>
       </div>
     </div>`;
   }
