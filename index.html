@@ -57,6 +57,37 @@
       padding: 20px; /* top padding for small spacing */
     }
 
+    .topbar {
+      width: 100%;
+      display: flex;
+      justify-content: flex-end;
+      margin-bottom: 8px;
+    }
+
+    .btn {
+      font-family: 'DM Sans', sans-serif;
+      font-size: 13px;
+      font-weight: 500;
+      padding: 8px 18px;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      outline: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      white-space: nowrap;
+      background: transparent;
+      color: var(--text-muted);
+      border: 1px solid var(--border);
+    }
+
+    .btn:hover {
+      border-color: var(--border-strong);
+      color: var(--text);
+      background: var(--surface);
+    }
+
     h1 {
       color: var(--accent);
       margin: 30px 0 24px; /* halved top margin */
@@ -95,10 +126,141 @@
   </style>
 </head>
 <body>
+  <div class="topbar">
+    <button class="btn" id="authBtn">Sign In</button>
+  </div>
   <h1>My Project Links</h1>
   <ul>
     <li><a href="qa-manager.html">QA Manager</a></li>
     <li><a href="timer-queue.html">Timer Queue</a></li>
   </ul>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="cloud-config.js"></script>
+  <script>
+    const cloudState = {
+      client: null,
+      user: null,
+      authReady: false,
+      authBound: false,
+      statusMessage: ''
+    };
+
+    function getCloudConfig() {
+      const config = window.XVB8_CLOUD_CONFIG || {};
+      if (!config.supabaseUrl || !config.supabaseAnonKey) return null;
+      return config;
+    }
+
+    function initSupabase() {
+      if (cloudState.client) return cloudState.client;
+      const config = getCloudConfig();
+      if (!config || !window.supabase) return null;
+      cloudState.client = window.supabase.createClient(config.supabaseUrl, config.supabaseAnonKey);
+      return cloudState.client;
+    }
+
+    function updateAuthButton() {
+      const button = document.getElementById('authBtn');
+      if (!button) return;
+      if (!getCloudConfig()) {
+        button.textContent = 'Cloud Setup';
+        return;
+      }
+      button.textContent = cloudState.user ? 'Sign Out' : 'Sign In';
+    }
+
+    async function refreshSession() {
+      const client = initSupabase();
+      if (!client) {
+        cloudState.user = null;
+        cloudState.authReady = true;
+        updateAuthButton();
+        return;
+      }
+
+      const { data, error } = await client.auth.getSession();
+      cloudState.user = error ? null : (data.session?.user || null);
+      cloudState.authReady = true;
+      cloudState.statusMessage = error ? `Cloud auth failed: ${error.message}` : '';
+      updateAuthButton();
+    }
+
+    function bindAuthListener() {
+      if (cloudState.authBound) return;
+      const client = initSupabase();
+      if (!client) return;
+
+      client.auth.onAuthStateChange((_event, session) => {
+        cloudState.user = session?.user || null;
+        cloudState.authReady = true;
+        cloudState.statusMessage = '';
+        updateAuthButton();
+      });
+
+      cloudState.authBound = true;
+    }
+
+    async function promptSignIn() {
+      const client = initSupabase();
+      if (!client) {
+        alert('Cloud backend not configured. Edit cloud-config.js with your Supabase URL and anon key.');
+        return false;
+      }
+
+      const email = window.prompt('Enter your account email.');
+      if (email === null) return false;
+      if (!email.trim()) {
+        alert('Email is required.');
+        return false;
+      }
+
+      const password = window.prompt('Enter your account password.');
+      if (password === null) return false;
+
+      const { error } = await client.auth.signInWithPassword({
+        email: email.trim(),
+        password
+      });
+
+      if (error) {
+        alert(error.message);
+        return false;
+      }
+
+      await refreshSession();
+      return Boolean(cloudState.user);
+    }
+
+    async function handleAuthButton() {
+      const client = initSupabase();
+      if (!client) {
+        alert('Cloud backend not configured. Edit cloud-config.js with your Supabase URL and anon key.');
+        return;
+      }
+
+      if (cloudState.user) {
+        const { error } = await client.auth.signOut();
+        if (error) {
+          alert(error.message);
+          return;
+        }
+        cloudState.user = null;
+        cloudState.statusMessage = 'Signed out.';
+        updateAuthButton();
+        return;
+      }
+
+      await promptSignIn();
+    }
+
+    document.getElementById('authBtn').addEventListener('click', function() {
+      void handleAuthButton();
+    });
+
+    updateAuthButton();
+    bindAuthListener();
+    void refreshSession();
+  </script>
 </body>
 </html>
