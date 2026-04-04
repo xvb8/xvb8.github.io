@@ -290,13 +290,6 @@ const state = {
 let rafId = null;
 let lastTick = null;
 
-function buildDefaultTimers() {
-  return Array.from({ length: 34 }, (_, index) => ({
-    title: `Slide ${index + 1}`,
-    seconds: 2 * 60
-  }));
-}
-
 function getCloudConfig() {
   const config = window.XVB8_CLOUD_CONFIG || {};
   if (!config.supabaseUrl || !config.supabaseAnonKey) return null;
@@ -517,26 +510,6 @@ async function saveTimerPositions(alertOnError = false) {
   return true;
 }
 
-async function importInitialTimers() {
-  const client = initSupabase();
-  const payload = buildDefaultTimers().map((timer, index) => ({
-    owner_id: cloudState.user.id,
-    title: timer.title,
-    seconds: timer.seconds,
-    position: index
-  }));
-  const insertResult = await client.from(TIMER_TABLE).insert(payload);
-  if (insertResult.error) throw insertResult.error;
-  const stateResult = await client.from(TIMER_STATE_TABLE).upsert({
-    owner_id: cloudState.user.id,
-    current_index: 0,
-    elapsed: 0,
-    sound: true,
-    done: false
-  }, { onConflict: 'owner_id' });
-  if (stateResult.error) throw stateResult.error;
-}
-
 async function loadCloudState() {
   const client = initSupabase();
   if (!getCloudConfig()) {
@@ -566,19 +539,6 @@ async function loadCloudState() {
     .select('id, title, seconds, position')
     .eq('owner_id', cloudState.user.id)
     .order('position', { ascending: true });
-
-  if (!timersResult.error && !timersResult.data.length) {
-    try {
-      await importInitialTimers();
-      timersResult = await client
-        .from(TIMER_TABLE)
-        .select('id, title, seconds, position')
-        .eq('owner_id', cloudState.user.id)
-        .order('position', { ascending: true });
-    } catch (importError) {
-      timersResult = { data: [], error: importError };
-    }
-  }
 
   const stateResult = await client
     .from(TIMER_STATE_TABLE)

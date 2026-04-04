@@ -430,16 +430,7 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="cloud-config.js"></script>
 <script>
-const STORAGE_KEY = 'qa_items_v1';
 const QA_TABLE = 'qa_items';
-
-const defaultItems = [
-  { q: 'What is this app for?', a: 'This is a personal Q&A manager. You can add, edit, delete, and search through questions and answers. Use Ctrl+F in your browser to search all visible text, or use the filter bar above.' },
-  { q: 'How do I add a new question?', a: 'Click the Add Q&A button in the top right. A dialog will appear where you can enter both the question and its answer.' },
-  { q: 'Can I edit an existing entry?', a: 'Yes. Hover over any item and click the pencil icon to open it for editing.' },
-  { q: 'How does the filter work?', a: 'The filter bar searches across both questions and answers in real time. It highlights matching text and hides entries that do not match.' },
-  { q: 'Are my entries saved?', a: 'Yes. Your entries are stored in the cloud and tied to your authenticated account.' }
-];
 
 const cloudState = {
   client: null,
@@ -487,20 +478,6 @@ function highlight(text, query) {
   const safe = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const re = new RegExp(`(${safe})`, 'gi');
   return escapeHtml(text).replace(re, '<mark>$1</mark>');
-}
-
-function loadLegacyItems() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .filter(item => item && typeof item.q === 'string' && typeof item.a === 'string')
-      .map(item => ({ q: item.q, a: item.a }));
-  } catch (error) {
-    return [];
-  }
 }
 
 function signedOutMessage() {
@@ -614,20 +591,6 @@ async function ensureAuthenticated(actionLabel) {
   return true;
 }
 
-async function importInitialItems() {
-  const client = initSupabase();
-  const source = loadLegacyItems();
-  const seed = source.length ? source : defaultItems;
-  const payload = seed.map((item, index) => ({
-    owner_id: cloudState.user.id,
-    question: item.q,
-    answer: item.a,
-    position: index
-  }));
-  const { error } = await client.from(QA_TABLE).insert(payload);
-  if (error) throw error;
-}
-
 async function loadItems() {
   const client = initSupabase();
   if (!getCloudConfig()) {
@@ -660,21 +623,6 @@ async function loadItems() {
     cloudState.statusMessage = `Cloud load failed: ${error.message}`;
     renderList();
     return;
-  }
-
-  if (!data.length) {
-    try {
-      await importInitialItems();
-      const retry = await client
-        .from(QA_TABLE)
-        .select('id, question, answer, position')
-        .eq('owner_id', cloudState.user.id)
-        .order('position', { ascending: true });
-      data = retry.data || [];
-      error = retry.error || null;
-    } catch (importError) {
-      error = importError;
-    }
   }
 
   if (error) {

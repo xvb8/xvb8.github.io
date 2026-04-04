@@ -36,7 +36,6 @@ Never put this in the repo:
 
 - [qa-manager.html](qa-manager.html) now signs in with Supabase Auth and stores Q&A data in the `qa_items` table.
 - [timer-queue.html](timer-queue.html) now signs in with Supabase Auth and stores queue data in the `timer_items` and `timer_state` tables.
-- The Q&A app will import any existing browser-local Q&A data into the cloud the first time an authenticated account opens an empty cloud library.
 
 ### Current Limitation
 
