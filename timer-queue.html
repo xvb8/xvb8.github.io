@@ -168,6 +168,23 @@
   .btn-ghost { background: transparent; border-color: transparent; color: var(--text3); font-size: 12px; }
   .btn-ghost:hover { background: var(--surface2); color: var(--text2); border-color: transparent; }
 
+  .sound-btn {
+    margin-left: auto;
+    color: var(--active);
+  }
+
+  .sound-btn:hover {
+    color: var(--active-light);
+  }
+
+  .sound-btn.muted {
+    color: var(--text3);
+  }
+
+  .sound-btn.muted:hover {
+    color: var(--text2);
+  }
+
   .queue-header {
     display: flex;
     justify-content: space-between;
@@ -971,7 +988,7 @@ function render() {
           : `<button class="btn btn-primary" id="play-btn" onclick="startTimer()">▶ ${state.elapsed > 0 || state.current > 0 ? 'Resume' : 'Start'}</button>`}
         <button class="btn" onclick="skipTimer()">Skip →</button>
         <button class="btn btn-ghost" onclick="resetAll()">↺ Reset all</button>
-        <button class="btn btn-ghost" style="margin-left:auto;" onclick="toggleSound()">${state.sound ? '🔔' : '🔕'}</button>
+        <button class="btn btn-ghost sound-btn${state.sound ? '' : ' muted'}" onclick="toggleSound()">${state.sound ? '🔔' : '🔕'}</button>
       </div>
     </div>`;
   }
