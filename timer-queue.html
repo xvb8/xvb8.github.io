@@ -255,189 +255,383 @@
 <header>
   <h1>Timer Queue</h1>
   <div class="header-meta">
-    <button class="btn btn-ghost" id="protectionBtn">Set Edit Lock</button>
+    <button class="btn btn-ghost" id="authBtn">Sign In</button>
     <span class="badge" id="total-badge"></span>
   </div>
 </header>
 
 <div class="main" id="app"></div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="cloud-config.js"></script>
 <script>
-const PASSWORD_HASH_COOKIE = 'xvb8_edit_lock_hash';
-const PASSWORD_AUTH_COOKIE = 'xvb8_edit_lock_auth';
-const PASSWORD_COOKIE_DAYS = 365;
-const AUTH_COOKIE_DAYS = 7;
+const TIMER_TABLE = 'timer_items';
+const TIMER_STATE_TABLE = 'timer_state';
+
+const cloudState = {
+  client: null,
+  user: null,
+  authReady: false,
+  authBound: false,
+  statusMessage: ''
+};
 
 const state = {
-  timers: Array.from({length: 34}, (_, i) => ({ id: i+1, title: `Slide ${i+1}`, seconds: 2*60 })),
+  timers: [],
   current: 0,
   elapsed: 0,
   running: false,
   done: false,
   editingId: null,
   editingActive: false,
-  sound: true,
-  nextId: 35
+  sound: true
 };
 
 let rafId = null;
 let lastTick = null;
 
-function getCookie(name) {
-  const prefix = `${name}=`;
-  const match = document.cookie
-    .split(';')
-    .map(part => part.trim())
-    .find(part => part.startsWith(prefix));
-  return match ? decodeURIComponent(match.slice(prefix.length)) : '';
+function buildDefaultTimers() {
+  return Array.from({ length: 34 }, (_, index) => ({
+    title: `Slide ${index + 1}`,
+    seconds: 2 * 60
+  }));
 }
 
-function setCookie(name, value, days) {
-  const expires = new Date(Date.now() + days * 864e5).toUTCString();
-  document.cookie = `${name}=${encodeURIComponent(value)}; expires=${expires}; path=/; SameSite=Lax`;
+function getCloudConfig() {
+  const config = window.XVB8_CLOUD_CONFIG || {};
+  if (!config.supabaseUrl || !config.supabaseAnonKey) return null;
+  return config;
 }
 
-function clearCookie(name) {
-  document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; SameSite=Lax`;
+function initSupabase() {
+  if (cloudState.client) return cloudState.client;
+  const config = getCloudConfig();
+  if (!config || !window.supabase) return null;
+  cloudState.client = window.supabase.createClient(config.supabaseUrl, config.supabaseAnonKey);
+  return cloudState.client;
 }
 
-function fallbackHash(value) {
-  let hash = 2166136261;
-  for (let index = 0; index < value.length; index++) {
-    hash ^= value.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-  return `fallback-${(hash >>> 0).toString(16).padStart(8, '0')}`;
-}
-
-async function hashPassword(value) {
-  if (!window.crypto || !window.crypto.subtle || typeof TextEncoder === 'undefined') {
-    return fallbackHash(value);
-  }
-  const bytes = new TextEncoder().encode(value);
-  const digest = await crypto.subtle.digest('SHA-256', bytes);
-  return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
-}
-
-function hasProtectionEnabled() {
-  return Boolean(getCookie(PASSWORD_HASH_COOKIE));
-}
-
-function isProtectionAuthorized() {
-  const expectedHash = getCookie(PASSWORD_HASH_COOKIE);
-  return Boolean(expectedHash) && getCookie(PASSWORD_AUTH_COOKIE) === expectedHash;
-}
-
-function updateProtectionButton() {
-  const button = document.getElementById('protectionBtn');
+function updateAuthButton() {
+  const button = document.getElementById('authBtn');
   if (!button) return;
-  if (!hasProtectionEnabled()) {
-    button.textContent = 'Set Edit Lock';
+  if (!getCloudConfig()) {
+    button.textContent = 'Cloud Setup';
     return;
   }
-  button.textContent = isProtectionAuthorized() ? 'Edit Lock: On' : 'Edit Lock: Locked';
+  button.textContent = cloudState.user ? 'Sign Out' : 'Sign In';
 }
 
-async function authorizeProtection(actionLabel) {
-  const expectedHash = getCookie(PASSWORD_HASH_COOKIE);
-  if (!expectedHash) return false;
-  if (isProtectionAuthorized()) return true;
+async function refreshSession() {
+  const client = initSupabase();
+  if (!client) {
+    cloudState.user = null;
+    cloudState.authReady = true;
+    updateAuthButton();
+    render();
+    return;
+  }
 
-  const entered = window.prompt(`Enter the edit password to ${actionLabel}.`);
-  if (entered === null) return false;
+  const { data, error } = await client.auth.getSession();
+  cloudState.user = error ? null : (data.session?.user || null);
+  cloudState.authReady = true;
+  cloudState.statusMessage = error ? `Cloud auth failed: ${error.message}` : '';
+  updateAuthButton();
+}
 
-  const enteredHash = await hashPassword(entered);
-  if (enteredHash !== expectedHash) {
-    alert('Incorrect password.');
+function bindAuthListener() {
+  if (cloudState.authBound) return;
+  const client = initSupabase();
+  if (!client) return;
+
+  client.auth.onAuthStateChange((_event, session) => {
+    cloudState.user = session?.user || null;
+    cloudState.authReady = true;
+    cloudState.statusMessage = '';
+    cancelAnimationFrame(rafId);
+    state.running = false;
+    state.editingId = null;
+    state.editingActive = false;
+    if (!cloudState.user) {
+      state.timers = [];
+      state.current = 0;
+      state.elapsed = 0;
+      state.done = false;
+    }
+    updateAuthButton();
+    void loadCloudState();
+  });
+
+  cloudState.authBound = true;
+}
+
+async function promptSignIn() {
+  const client = initSupabase();
+  if (!client) {
+    alert('Cloud backend not configured. Edit cloud-config.js with your Supabase URL and anon key.');
     return false;
   }
 
-  setCookie(PASSWORD_AUTH_COOKIE, expectedHash, AUTH_COOKIE_DAYS);
-  updateProtectionButton();
+  const email = window.prompt('Enter your account email.');
+  if (email === null) return false;
+  if (!email.trim()) {
+    alert('Email is required.');
+    return false;
+  }
+
+  const password = window.prompt('Enter your account password.');
+  if (password === null) return false;
+
+  const { error } = await client.auth.signInWithPassword({
+    email: email.trim(),
+    password
+  });
+
+  if (error) {
+    alert(error.message);
+    return false;
+  }
+
+  await refreshSession();
+  return Boolean(cloudState.user);
+}
+
+async function handleAuthButton() {
+  const client = initSupabase();
+  if (!client) {
+    alert('Cloud backend not configured. Edit cloud-config.js with your Supabase URL and anon key.');
+    return;
+  }
+
+  if (cloudState.user) {
+    const { error } = await client.auth.signOut();
+    if (error) {
+      alert(error.message);
+      return;
+    }
+    cloudState.user = null;
+    cloudState.statusMessage = 'Signed out.';
+    state.timers = [];
+    state.current = 0;
+    state.elapsed = 0;
+    state.running = false;
+    state.done = false;
+    updateAuthButton();
+    render();
+    return;
+  }
+
+  await promptSignIn();
+}
+
+async function ensureAuthenticated(actionLabel) {
+  if (cloudState.user) return true;
+  const signedIn = await promptSignIn();
+  if (!signedIn) return false;
+  if (!cloudState.user) {
+    alert(`Sign in is required to ${actionLabel}.`);
+    return false;
+  }
   return true;
 }
 
-async function configureProtection() {
-  const hasExistingPassword = hasProtectionEnabled();
-  if (hasExistingPassword) {
-    const choice = window.prompt('Password options: type "change" to update it, "clear" to remove it, or leave blank to cancel.');
-    if (!choice) return;
-
-    if (choice.toLowerCase() === 'clear') {
-      if (!(await authorizeProtection('clear the edit password'))) return;
-      if (!window.confirm('Remove edit/delete password protection from this browser?')) return;
-      clearCookie(PASSWORD_HASH_COOKIE);
-      clearCookie(PASSWORD_AUTH_COOKIE);
-      updateProtectionButton();
-      alert('Edit password removed.');
-      return;
-    }
-
-    if (choice.toLowerCase() !== 'change') return;
-    if (!(await authorizeProtection('change the edit password'))) return;
-  }
-
-  const first = window.prompt(hasExistingPassword ? 'Enter the new edit password.' : 'Create an edit password for edit/delete actions.');
-  if (first === null) return;
-  if (!first.trim()) {
-    alert('Password cannot be empty.');
-    return;
-  }
-
-  const second = window.prompt('Re-enter the password to confirm.');
-  if (second === null) return;
-  if (first !== second) {
-    alert('Passwords did not match.');
-    return;
-  }
-
-  const hashed = await hashPassword(first);
-  setCookie(PASSWORD_HASH_COOKIE, hashed, PASSWORD_COOKIE_DAYS);
-  setCookie(PASSWORD_AUTH_COOKIE, hashed, AUTH_COOKIE_DAYS);
-  if (getCookie(PASSWORD_HASH_COOKIE) !== hashed) {
-    alert('Could not save the password cookie in this browser. Check your cookie settings and try again.');
-    return;
-  }
-  updateProtectionButton();
-  alert(hasExistingPassword ? 'Edit password updated.' : 'Edit password saved.');
-}
-
-async function ensureProtectedAccess(actionLabel) {
-  if (!hasProtectionEnabled()) {
-    const shouldCreate = window.confirm('Editing and deleting are unlocked. Set an edit password now?');
-    if (!shouldCreate) return false;
-    await configureProtection();
-    if (!hasProtectionEnabled()) return false;
-  }
-  return authorizeProtection(actionLabel);
-}
-
-function pad(n) { return String(n).padStart(2,'0'); }
+function pad(n) { return String(n).padStart(2, '0'); }
 
 function fmt(s) {
   s = Math.max(0, s);
-  const h = Math.floor(s/3600), m = Math.floor((s%3600)/60), sec = s%60;
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
   return h > 0 ? `${pad(h)}:${pad(m)}:${pad(sec)}` : `${pad(m)}:${pad(sec)}`;
 }
 
 function fmtShort(s) {
-  const h = Math.floor(s/3600), m = Math.floor((s%3600)/60), sec = s%60;
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
   if (h > 0) return `${h}h ${m}m`;
-  if (m > 0) return `${m}m${sec > 0 ? ' '+sec+'s' : ''}`;
+  if (m > 0) return `${m}m${sec > 0 ? ` ${sec}s` : ''}`;
   return `${sec}s`;
+}
+
+function esc(s) {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function syncCurrentBounds() {
+  if (!state.timers.length) {
+    state.current = 0;
+    state.elapsed = 0;
+    state.done = false;
+    return;
+  }
+  state.current = Math.min(Math.max(state.current, 0), state.timers.length - 1);
+  const currentTimer = state.timers[state.current];
+  state.elapsed = Math.min(Math.max(state.elapsed, 0), Math.max(currentTimer.seconds - 1, 0));
+  if (state.done) {
+    state.current = state.timers.length - 1;
+    state.elapsed = 0;
+  }
+}
+
+async function saveTimerState(alertOnError = false) {
+  const client = initSupabase();
+  if (!client || !cloudState.user) return true;
+
+  syncCurrentBounds();
+
+  const payload = {
+    owner_id: cloudState.user.id,
+    current_index: state.timers.length ? state.current : 0,
+    elapsed: state.elapsed,
+    sound: state.sound,
+    done: state.done
+  };
+
+  const { error } = await client.from(TIMER_STATE_TABLE).upsert(payload, { onConflict: 'owner_id' });
+  if (error) {
+    if (alertOnError) alert(error.message);
+    return false;
+  }
+  return true;
+}
+
+async function saveTimerPositions(alertOnError = false) {
+  const client = initSupabase();
+  if (!client || !cloudState.user || !state.timers.length) return true;
+  const payload = state.timers.map((timer, index) => ({
+    id: timer.id,
+    owner_id: cloudState.user.id,
+    title: timer.title,
+    seconds: timer.seconds,
+    position: index
+  }));
+  const { error } = await client.from(TIMER_TABLE).upsert(payload, { onConflict: 'id' });
+  if (error) {
+    if (alertOnError) alert(error.message);
+    return false;
+  }
+  return true;
+}
+
+async function importInitialTimers() {
+  const client = initSupabase();
+  const payload = buildDefaultTimers().map((timer, index) => ({
+    owner_id: cloudState.user.id,
+    title: timer.title,
+    seconds: timer.seconds,
+    position: index
+  }));
+  const insertResult = await client.from(TIMER_TABLE).insert(payload);
+  if (insertResult.error) throw insertResult.error;
+  const stateResult = await client.from(TIMER_STATE_TABLE).upsert({
+    owner_id: cloudState.user.id,
+    current_index: 0,
+    elapsed: 0,
+    sound: true,
+    done: false
+  }, { onConflict: 'owner_id' });
+  if (stateResult.error) throw stateResult.error;
+}
+
+async function loadCloudState() {
+  const client = initSupabase();
+  if (!getCloudConfig()) {
+    cloudState.statusMessage = 'Cloud backend not configured. Fill in cloud-config.js and README setup.';
+    state.timers = [];
+    render();
+    return;
+  }
+
+  if (!cloudState.authReady) {
+    render();
+    return;
+  }
+
+  if (!cloudState.user) {
+    state.timers = [];
+    state.current = 0;
+    state.elapsed = 0;
+    state.running = false;
+    state.done = false;
+    render();
+    return;
+  }
+
+  let timersResult = await client
+    .from(TIMER_TABLE)
+    .select('id, title, seconds, position')
+    .eq('owner_id', cloudState.user.id)
+    .order('position', { ascending: true });
+
+  if (!timersResult.error && !timersResult.data.length) {
+    try {
+      await importInitialTimers();
+      timersResult = await client
+        .from(TIMER_TABLE)
+        .select('id, title, seconds, position')
+        .eq('owner_id', cloudState.user.id)
+        .order('position', { ascending: true });
+    } catch (importError) {
+      timersResult = { data: [], error: importError };
+    }
+  }
+
+  const stateResult = await client
+    .from(TIMER_STATE_TABLE)
+    .select('current_index, elapsed, sound, done')
+    .eq('owner_id', cloudState.user.id)
+    .maybeSingle();
+
+  if (timersResult.error) {
+    state.timers = [];
+    cloudState.statusMessage = `Cloud load failed: ${timersResult.error.message || timersResult.error}`;
+    render();
+    return;
+  }
+
+  if (stateResult.error) {
+    cloudState.statusMessage = `Cloud state load failed: ${stateResult.error.message}`;
+  } else {
+    cloudState.statusMessage = '';
+  }
+
+  state.timers = (timersResult.data || []).map(timer => ({
+    id: timer.id,
+    title: timer.title,
+    seconds: timer.seconds
+  }));
+
+  const saved = stateResult.data || { current_index: 0, elapsed: 0, sound: true, done: false };
+  state.current = Number.isInteger(saved.current_index) ? saved.current_index : 0;
+  state.elapsed = Number.isInteger(saved.elapsed) ? saved.elapsed : 0;
+  state.sound = saved.sound !== false;
+  state.done = Boolean(saved.done);
+  state.running = false;
+  state.editingId = null;
+  state.editingActive = false;
+  syncCurrentBounds();
+  render();
 }
 
 function beep() {
   if (!state.sound) return;
   try {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    const osc = ctx.createOscillator(), gain = ctx.createGain();
-    osc.connect(gain); gain.connect(ctx.destination);
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
     osc.frequency.value = 880;
     gain.gain.setValueAtTime(0.3, ctx.currentTime);
     gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
-    osc.start(); osc.stop(ctx.currentTime + 0.4);
-  } catch(e) {}
+    osc.start();
+    osc.stop(ctx.currentTime + 0.4);
+  } catch (error) {
+  }
 }
 
 function runLoop(ts) {
@@ -447,19 +641,27 @@ function runLoop(ts) {
   if (delta >= 1000) {
     lastTick = ts - (delta % 1000);
     const cur = state.timers[state.current];
+    if (!cur) {
+      state.running = false;
+      render();
+      return;
+    }
     state.elapsed++;
     if (state.elapsed >= cur.seconds) {
       beep();
-      state.current++;
       state.elapsed = 0;
-      if (state.current >= state.timers.length) {
+      if (state.current >= state.timers.length - 1) {
         state.running = false;
         state.done = true;
+        state.current = Math.max(0, state.timers.length - 1);
         render();
+        void saveTimerState();
         return;
       }
+      state.current++;
       render();
       lastTick = null;
+      void saveTimerState();
       rafId = requestAnimationFrame(runLoop);
       return;
     }
@@ -468,88 +670,68 @@ function runLoop(ts) {
   rafId = requestAnimationFrame(runLoop);
 }
 
+function updateBadge() {
+  const badge = document.getElementById('total-badge');
+  if (!badge) return;
+  if (!cloudState.user || !state.timers.length) {
+    badge.textContent = '';
+    return;
+  }
+  const rem = state.timers.slice(state.current).reduce((sum, timer, index) =>
+    sum + (index === 0 ? Math.max(timer.seconds - state.elapsed, 0) : timer.seconds), 0);
+  badge.textContent = `${state.timers.length} slide${state.timers.length !== 1 ? 's' : ''} · ${fmtShort(rem)} left`;
+}
+
 function updateActiveDisplay() {
   const cur = state.timers[state.current];
   if (!cur) return;
   const remaining = cur.seconds - state.elapsed;
   const pct = (state.elapsed / cur.seconds) * 100;
-
   const disp = document.getElementById('timer-display');
   if (disp) {
     disp.textContent = fmt(remaining);
     if (remaining <= 10) disp.classList.add('urgent-anim');
     else disp.classList.remove('urgent-anim');
   }
-
   const fill = document.getElementById('progress-fill');
-  if (fill) fill.style.width = pct + '%';
-
+  if (fill) fill.style.width = `${pct}%`;
   const stripe = document.getElementById('progress-stripe');
-  if (stripe) stripe.style.width = pct + '%';
-
+  if (stripe) stripe.style.width = `${pct}%`;
   updateBadge();
-}
-
-function updateBadge() {
-  const badge = document.getElementById('total-badge');
-  if (!badge) return;
-  if (!state.timers.length) { badge.textContent = ''; return; }
-  const rem = state.timers.slice(state.current).reduce((s,t,i) =>
-    s + (i===0 ? t.seconds - state.elapsed : t.seconds), 0);
-  badge.textContent = `${state.timers.length} slides · ${fmtShort(rem)} left`;
 }
 
 function startTimer() {
   if (state.done || !state.timers.length) return;
   state.running = true;
   lastTick = null;
-
-  const card = document.querySelector('.active-card');
-  if (card) {
-    const lbl = card.querySelector('.active-label');
-    if (lbl) lbl.textContent = 'now running';
-    card.style.setProperty('--stripe-color', 'var(--active-light)');
-  }
-
   const pb = document.getElementById('play-btn');
-  if (pb) pb.outerHTML = `<button class="btn btn-primary" id="play-btn" onclick="pauseTimer()">⏸ Pause</button>`;
-
-  const stripe = document.getElementById('progress-stripe');
-  if (stripe) stripe.style.background = 'var(--active-light)';
-  const fill = document.getElementById('progress-fill');
-  if (fill) fill.style.background = 'var(--active-light)';
-
+  if (pb) pb.outerHTML = '<button class="btn btn-primary" id="play-btn" onclick="pauseTimer()">⏸ Pause</button>';
   rafId = requestAnimationFrame(runLoop);
 }
 
 function pauseTimer() {
   state.running = false;
   cancelAnimationFrame(rafId);
-
-  const card = document.querySelector('.active-card');
-  const lbl = card?.querySelector('.active-label');
-  if (lbl) lbl.textContent = 'paused';
-
-  const stripe = document.getElementById('progress-stripe');
-  if (stripe) stripe.style.background = 'var(--accent2)';
-  const fill = document.getElementById('progress-fill');
-  if (fill) fill.style.background = 'var(--accent2)';
-
   const pb = document.getElementById('play-btn');
-  if (pb) pb.outerHTML = `<button class="btn btn-primary" id="play-btn" onclick="startTimer()">▶ Resume</button>`;
+  if (pb) pb.outerHTML = '<button class="btn btn-primary" id="play-btn" onclick="startTimer()">▶ Resume</button>';
+  void saveTimerState();
 }
 
 function skipTimer() {
   beep();
-  state.current++;
-  state.elapsed = 0;
-  if (state.current >= state.timers.length) {
-    cancelAnimationFrame(rafId);
+  if (!state.timers.length) return;
+  if (state.current >= state.timers.length - 1) {
     state.running = false;
     state.done = true;
+    state.current = Math.max(0, state.timers.length - 1);
+    state.elapsed = 0;
+  } else {
+    state.current++;
+    state.elapsed = 0;
   }
   lastTick = null;
   render();
+  void saveTimerState();
   if (state.running) rafId = requestAnimationFrame(runLoop);
 }
 
@@ -560,104 +742,211 @@ function resetAll() {
   state.running = false;
   state.done = false;
   state.editingActive = false;
+  state.editingId = null;
   lastTick = null;
   render();
+  void saveTimerState();
 }
 
 async function deleteTimer(id) {
-  if (!(await ensureProtectedAccess('delete this timer'))) return;
-  const idx = state.timers.findIndex(t => t.id === id);
+  if (!(await ensureAuthenticated('delete this timer'))) return;
+  const idx = state.timers.findIndex(timer => timer.id === id);
+  if (idx === -1) return;
+
+  const client = initSupabase();
+  const { error } = await client
+    .from(TIMER_TABLE)
+    .delete()
+    .eq('id', id)
+    .eq('owner_id', cloudState.user.id);
+
+  if (error) {
+    alert(error.message);
+    return;
+  }
+
   if (idx < state.current) state.current = Math.max(0, state.current - 1);
-  state.timers = state.timers.filter(t => t.id !== id);
-  if (!state.timers.length) { state.current = 0; state.done = false; }
+  state.timers = state.timers.filter(timer => timer.id !== id);
+  if (!state.timers.length) {
+    state.current = 0;
+    state.elapsed = 0;
+    state.done = false;
+    state.running = false;
+  }
+  syncCurrentBounds();
   render();
+
+  if (!(await saveTimerPositions(true))) {
+    await loadCloudState();
+    return;
+  }
+  await saveTimerState(true);
 }
 
 async function addTimer(title, minutes, seconds) {
-  if (!(await ensureProtectedAccess('add a new timer'))) return;
-  const s = (parseInt(minutes)||0)*60 + (parseInt(seconds)||0);
-  if (!title.trim() || s <= 0) return;
-  state.timers.push({ id: state.nextId++, title: title.trim(), seconds: s });
-  if (state.done) state.done = false;
+  const totalSeconds = (parseInt(minutes, 10) || 0) * 60 + (parseInt(seconds, 10) || 0);
+  if (!title.trim() || totalSeconds <= 0) return;
+  if (!(await ensureAuthenticated('add a new timer'))) return;
+
+  const client = initSupabase();
+  const { data, error } = await client
+    .from(TIMER_TABLE)
+    .insert({
+      owner_id: cloudState.user.id,
+      title: title.trim(),
+      seconds: totalSeconds,
+      position: state.timers.length
+    })
+    .select('id, title, seconds')
+    .single();
+
+  if (error) {
+    alert(error.message);
+    return;
+  }
+
+  state.timers.push({ id: data.id, title: data.title, seconds: data.seconds });
+  if (state.done) {
+    state.done = false;
+    state.current = Math.max(0, state.timers.length - 1);
+    state.elapsed = 0;
+  }
   render();
+  await saveTimerState(true);
 }
 
 async function startEdit(id) {
-  if (!(await ensureProtectedAccess('edit this timer'))) return;
+  if (!(await ensureAuthenticated('edit this timer'))) return;
   state.editingId = id;
   render();
 }
 
 async function startEditActive() {
-  if (!(await ensureProtectedAccess('edit the active timer'))) return;
+  if (!(await ensureAuthenticated('edit the active timer'))) return;
   if (state.running) pauseTimer();
   state.editingActive = true;
   render();
 }
 
 async function saveEditActive() {
-  if (!(await ensureProtectedAccess('save changes to the active timer'))) return;
+  if (!(await ensureAuthenticated('save changes to the active timer'))) return;
   const cur = state.timers[state.current];
-  if (!cur) { state.editingActive = false; render(); return; }
-  const title = document.getElementById('ae-title')?.value || '';
-  const mins  = parseInt(document.getElementById('ae-min')?.value)  || 0;
-  const secs  = parseInt(document.getElementById('ae-sec')?.value)  || 0;
-  const ns = mins * 60 + secs;
-  if (title.trim()) cur.title = title.trim();
-  if (ns > 0) {
-    cur.seconds = ns;
-    state.elapsed = Math.min(state.elapsed, ns - 1);
+  if (!cur) {
+    state.editingActive = false;
+    render();
+    return;
   }
+
+  const title = document.getElementById('ae-title')?.value || '';
+  const mins = parseInt(document.getElementById('ae-min')?.value, 10) || 0;
+  const secs = parseInt(document.getElementById('ae-sec')?.value, 10) || 0;
+  const nextSeconds = mins * 60 + secs;
+  const nextTitle = title.trim() || cur.title;
+  const duration = nextSeconds > 0 ? nextSeconds : cur.seconds;
+
+  const client = initSupabase();
+  const { error } = await client
+    .from(TIMER_TABLE)
+    .update({ title: nextTitle, seconds: duration })
+    .eq('id', cur.id)
+    .eq('owner_id', cloudState.user.id);
+
+  if (error) {
+    alert(error.message);
+    return;
+  }
+
+  cur.title = nextTitle;
+  cur.seconds = duration;
+  state.elapsed = Math.min(state.elapsed, Math.max(duration - 1, 0));
+  state.editingActive = false;
+  render();
+  await saveTimerState(true);
+}
+
+function cancelEditActive() {
   state.editingActive = false;
   render();
 }
 
-function cancelEditActive() { state.editingActive = false; render(); }
-
 async function saveEdit(id) {
-  if (!(await ensureProtectedAccess('save changes to this timer'))) return;
+  if (!(await ensureAuthenticated('save changes to this timer'))) return;
   const title = document.getElementById(`et-${id}`)?.value || '';
-  const mins = parseInt(document.getElementById(`em-${id}`)?.value) || 0;
-  const secs = parseInt(document.getElementById(`es-${id}`)?.value) || 0;
-  const t = state.timers.find(t => t.id === id);
-  if (t) {
-    if (title.trim()) t.title = title.trim();
-    const ns = mins*60+secs;
-    if (ns > 0) t.seconds = ns;
+  const mins = parseInt(document.getElementById(`em-${id}`)?.value, 10) || 0;
+  const secs = parseInt(document.getElementById(`es-${id}`)?.value, 10) || 0;
+  const timer = state.timers.find(item => item.id === id);
+  if (!timer) return;
+
+  const nextTitle = title.trim() || timer.title;
+  const nextSeconds = mins * 60 + secs;
+  const duration = nextSeconds > 0 ? nextSeconds : timer.seconds;
+
+  const client = initSupabase();
+  const { error } = await client
+    .from(TIMER_TABLE)
+    .update({ title: nextTitle, seconds: duration })
+    .eq('id', id)
+    .eq('owner_id', cloudState.user.id);
+
+  if (error) {
+    alert(error.message);
+    return;
   }
+
+  timer.title = nextTitle;
+  timer.seconds = duration;
   state.editingId = null;
+  syncCurrentBounds();
   render();
+  await saveTimerState(true);
 }
 
-function esc(s) {
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+function toggleSound() {
+  state.sound = !state.sound;
+  render();
+  void saveTimerState();
 }
 
-function toggleSound() { state.sound = !state.sound; render(); }
+function signedOutMarkup() {
+  if (!getCloudConfig()) {
+    return 'Cloud backend not configured. Fill in cloud-config.js and apply the README setup steps.';
+  }
+  if (!cloudState.authReady) {
+    return 'Checking sign-in...';
+  }
+  return cloudState.statusMessage || 'Sign in to load your private timer queue.';
+}
 
 function render() {
   const app = document.getElementById('app');
+  const badge = document.getElementById('total-badge');
   const cur = state.timers[state.current];
   const remaining = cur ? cur.seconds - state.elapsed : 0;
   const pct = cur ? (state.elapsed / cur.seconds) * 100 : 0;
-  const totalSec = state.timers.reduce((s,t)=>s+t.seconds,0);
+  const totalSec = state.timers.reduce((sum, timer) => sum + timer.seconds, 0);
 
-  document.getElementById('total-badge').textContent = state.timers.length
-    ? `${state.timers.length} slide${state.timers.length!==1?'s':''} · ${fmtShort(totalSec)} total`
+  badge.textContent = cloudState.user && state.timers.length
+    ? `${state.timers.length} slide${state.timers.length !== 1 ? 's' : ''} · ${fmtShort(totalSec)} total`
     : '';
+
+  if (!getCloudConfig() || !cloudState.authReady || !cloudState.user) {
+    app.innerHTML = `<div style="text-align:center;padding:3rem 2rem;background:var(--surface);border:1px dashed var(--border2);border-radius:12px;font-size:13px;color:var(--text3);">${esc(signedOutMarkup())}</div>`;
+    return;
+  }
 
   let html = '';
 
   if (!state.timers.length) {
-    html = `<div style="text-align:center;padding:3rem 2rem;background:var(--surface);border:1px dashed var(--border2);border-radius:12px;font-size:13px;color:var(--text3);">Add timers below to get started</div>`;
+    html = '<div style="text-align:center;padding:3rem 2rem;background:var(--surface);border:1px dashed var(--border2);border-radius:12px;font-size:13px;color:var(--text3);">Add timers below to get started</div>';
   } else if (state.done) {
     html = `<div class="complete-banner">
       <h2>All slides complete</h2>
       <p>Total time · ${fmtShort(totalSec)}</p>
       <button class="btn btn-primary" onclick="resetAll()" style="margin:0 auto;">↺ Reset &amp; Start Over</button>
     </div>`;
-  } else if (state.editingActive) {
-    const m = Math.floor(cur.seconds/60), s = cur.seconds%60;
+  } else if (state.editingActive && cur) {
+    const minutes = Math.floor(cur.seconds / 60);
+    const seconds = cur.seconds % 60;
     html = `<div class="active-card" style="border-color:var(--active-light);">
       <div id="progress-stripe" style="position:absolute;top:0;left:0;height:2px;background:var(--active-light);width:${pct}%"></div>
       <div class="active-label" style="color:var(--accent2);">editing</div>
@@ -666,11 +955,9 @@ function render() {
       </div>
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:1.5rem;">
         <span style="font-family:var(--mono);font-size:13px;color:var(--text3);">Duration</span>
-        <input class="add-input" id="ae-min" type="number" min="0" max="999" value="${m}" placeholder="min"
-          style="width:70px;text-align:center;font-family:var(--mono);font-size:22px;padding:6px 8px;" />
+        <input class="add-input" id="ae-min" type="number" min="0" max="999" value="${minutes}" placeholder="min" style="width:70px;text-align:center;font-family:var(--mono);font-size:22px;padding:6px 8px;" />
         <span style="font-family:var(--mono);font-size:20px;color:var(--text3);">:</span>
-        <input class="add-input" id="ae-sec" type="number" min="0" max="59" value="${s}" placeholder="sec"
-          style="width:70px;text-align:center;font-family:var(--mono);font-size:22px;padding:6px 8px;" />
+        <input class="add-input" id="ae-sec" type="number" min="0" max="59" value="${seconds}" placeholder="sec" style="width:70px;text-align:center;font-family:var(--mono);font-size:22px;padding:6px 8px;" />
         <span style="font-size:12px;color:var(--text3);margin-left:2px;">min / sec</span>
       </div>
       <div class="controls">
@@ -678,7 +965,7 @@ function render() {
         <button class="btn btn-ghost" onclick="cancelEditActive()">Cancel</button>
       </div>
     </div>`;
-  } else {
+  } else if (cur) {
     const paused = !state.running;
     const fillColor = paused ? 'var(--accent2)' : 'var(--active-light)';
     html = `<div class="active-card">
@@ -688,51 +975,53 @@ function render() {
         <div class="active-title" style="margin-bottom:0;">${esc(cur.title)}</div>
         <button class="row-btn" onclick="startEditActive()" title="Edit this timer" style="opacity:0.5;font-size:13px;padding:4px 8px;flex-shrink:0;">✎ edit</button>
       </div>
-      <div id="timer-display"${remaining<=10&&remaining>0&&state.running?' class="urgent-anim"':''}>${fmt(remaining)}</div>
+      <div id="timer-display"${remaining <= 10 && remaining > 0 && state.running ? ' class="urgent-anim"' : ''}>${fmt(remaining)}</div>
       <div class="progress-bar"><div id="progress-fill" style="width:${pct}%;background:${fillColor}"></div></div>
       <div class="controls">
         ${state.running
-          ? `<button class="btn btn-primary" id="play-btn" onclick="pauseTimer()">⏸ Pause</button>`
-          : `<button class="btn btn-primary" id="play-btn" onclick="startTimer()">▶ ${state.elapsed>0||state.current>0?'Resume':'Start'}</button>`}
+          ? '<button class="btn btn-primary" id="play-btn" onclick="pauseTimer()">⏸ Pause</button>'
+          : `<button class="btn btn-primary" id="play-btn" onclick="startTimer()">▶ ${state.elapsed > 0 || state.current > 0 ? 'Resume' : 'Start'}</button>`}
         <button class="btn" onclick="skipTimer()">Skip →</button>
         <button class="btn btn-ghost" onclick="resetAll()">↺ Reset all</button>
-        <button class="btn btn-ghost" style="margin-left:auto;" onclick="toggleSound()">${state.sound?'🔔':'🔕'}</button>
+        <button class="btn btn-ghost" style="margin-left:auto;" onclick="toggleSound()">${state.sound ? '🔔' : '🔕'}</button>
       </div>
     </div>`;
   }
 
-  const afterRemaining = state.timers.slice(state.current+1).reduce((s,t)=>s+t.seconds,0);
+  const afterRemaining = state.timers.slice(state.current + 1).reduce((sum, timer) => sum + timer.seconds, 0);
 
   html += `<div class="queue-header">
     <span class="queue-label">Queue</span>
-    <span class="badge">${!state.done&&afterRemaining>0?fmtShort(afterRemaining)+' remaining after this':''}</span>
+    <span class="badge">${!state.done && afterRemaining > 0 ? `${fmtShort(afterRemaining)} remaining after this` : ''}</span>
   </div><div class="queue-scroll">`;
 
-  state.timers.forEach((t, i) => {
-    const isDone = i < state.current;
-    const isActive = i === state.current && !state.done;
+  state.timers.forEach((timer, index) => {
+    const isDone = !state.done && index < state.current;
+    const isActive = index === state.current && !state.done;
     if (isActive) return;
 
-    if (state.editingId === t.id) {
-      const m = Math.floor(t.seconds/60), s = t.seconds%60;
+    if (state.editingId === timer.id) {
+      const minutes = Math.floor(timer.seconds / 60);
+      const seconds = timer.seconds % 60;
       html += `<div class="timer-row" style="grid-template-columns:32px 1fr 62px 52px 60px;gap:8px;">
-        <span class="row-index">${i+1}</span>
-        <input class="edit-input" id="et-${t.id}" value="${esc(t.title)}" />
-        <input class="add-input" id="em-${t.id}" type="number" min="0" max="999" value="${m}" style="width:54px;padding:4px 8px;font-size:12px;text-align:center;" />
-        <input class="add-input" id="es-${t.id}" type="number" min="0" max="59" value="${s}" style="width:44px;padding:4px 6px;font-size:12px;text-align:center;" />
-        <button class="add-btn" onclick="saveEdit(${t.id})" style="font-size:12px;padding:4px 8px;">Save</button>
+        <span class="row-index">${index + 1}</span>
+        <input class="edit-input" id="et-${timer.id}" value="${esc(timer.title)}" />
+        <input class="add-input" id="em-${timer.id}" type="number" min="0" max="999" value="${minutes}" style="width:54px;padding:4px 8px;font-size:12px;text-align:center;" />
+        <input class="add-input" id="es-${timer.id}" type="number" min="0" max="59" value="${seconds}" style="width:44px;padding:4px 6px;font-size:12px;text-align:center;" />
+        <button class="add-btn" onclick="saveEdit('${timer.id}')" style="font-size:12px;padding:4px 8px;">Save</button>
       </div>`;
-    } else {
-      html += `<div class="timer-row${isDone?' done':''}">
-        <span class="row-index">${isDone?'✓':i+1}</span>
-        <span class="row-title">${esc(t.title)}</span>
-        <span class="row-time">${fmt(t.seconds)}</span>
-        <div class="row-actions">
-          <button class="row-btn" onclick="startEdit(${t.id})">✎</button>
-          <button class="row-btn del" onclick="deleteTimer(${t.id})">✕</button>
-        </div>
-      </div>`;
+      return;
     }
+
+    html += `<div class="timer-row${isDone ? ' done' : ''}">
+      <span class="row-index">${isDone ? '✓' : index + 1}</span>
+      <span class="row-title">${esc(timer.title)}</span>
+      <span class="row-time">${fmt(timer.seconds)}</span>
+      <div class="row-actions">
+        <button class="row-btn" onclick="startEdit('${timer.id}')">✎</button>
+        <button class="row-btn del" onclick="deleteTimer('${timer.id}')">✕</button>
+      </div>
+    </div>`;
   });
 
   html += `</div><div class="add-area"><div class="add-form">
@@ -744,27 +1033,41 @@ function render() {
 
   app.innerHTML = html;
 
-  const qs = document.querySelector('.queue-scroll');
-  if (qs) {
-    const first = qs.querySelector('.timer-row:not(.done)');
+  const queue = document.querySelector('.queue-scroll');
+  if (queue) {
+    const first = queue.querySelector('.timer-row:not(.done)');
     if (first) setTimeout(() => first.scrollIntoView({ block: 'nearest', behavior: 'smooth' }), 50);
   }
 }
 
 async function addFromForm() {
   const title = document.getElementById('new-title')?.value || '';
-  const mins  = document.getElementById('new-min')?.value  || '0';
-  const secs  = document.getElementById('new-sec')?.value  || '0';
+  const mins = document.getElementById('new-min')?.value || '0';
+  const secs = document.getElementById('new-sec')?.value || '0';
   await addTimer(title, mins, secs);
   setTimeout(() => document.getElementById('new-title')?.focus(), 0);
 }
 
-document.getElementById('protectionBtn').addEventListener('click', function() {
-  configureProtection();
+document.getElementById('authBtn').addEventListener('click', function() {
+  void handleAuthButton();
 });
 
-updateProtectionButton();
+document.addEventListener('visibilitychange', function() {
+  if (document.visibilityState === 'hidden' && cloudState.user) void saveTimerState();
+});
+
+window.addEventListener('beforeunload', function() {
+  if (cloudState.user) void saveTimerState();
+});
+
+setInterval(function() {
+  if (state.running && cloudState.user) void saveTimerState();
+}, 10000);
+
+updateAuthButton();
+bindAuthListener();
 render();
+void refreshSession().then(loadCloudState);
 </script>
 </body>
 </html>

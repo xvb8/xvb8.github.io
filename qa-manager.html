@@ -382,7 +382,7 @@
         <p class="subtitle">Use Ctrl+F to search all content — or use the filter below</p>
       </div>
       <div class="header-actions">
-        <button class="btn btn-ghost" id="protectionBtn">Set Edit Lock</button>
+        <button class="btn btn-ghost" id="authBtn">Sign In</button>
         <button class="btn btn-primary" id="addBtn">
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
           Add Q&amp;A
@@ -427,174 +427,59 @@
   </div>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="cloud-config.js"></script>
 <script>
 const STORAGE_KEY = 'qa_items_v1';
-const PASSWORD_HASH_COOKIE = 'xvb8_edit_lock_hash';
-const PASSWORD_AUTH_COOKIE = 'xvb8_edit_lock_auth';
-const PASSWORD_COOKIE_DAYS = 365;
-const AUTH_COOKIE_DAYS = 7;
+const QA_TABLE = 'qa_items';
 
 const defaultItems = [
-  { id: 1, q: "What is this app for?", a: "This is a personal Q&A manager. You can add, edit, delete, and search through questions and answers. Use Ctrl+F in your browser to search all visible text, or use the filter bar above." },
-  { id: 2, q: "How do I add a new question?", a: "Click the 'Add Q&A' button in the top right. A dialog will appear where you can enter both the question and its answer." },
-  { id: 3, q: "Can I edit an existing entry?", a: "Yes! Hover over any item and click the pencil icon (edit button) to open it for editing." },
-  { id: 4, q: "How does the filter work?", a: "The filter bar searches across both questions and answers in real time. It highlights matching text and hides entries that don't match." },
-  { id: 5, q: "Are my entries saved?", a: "Yes, all Q&As are saved to your browser's localStorage so they persist across page refreshes. They are private to your browser." },
+  { q: 'What is this app for?', a: 'This is a personal Q&A manager. You can add, edit, delete, and search through questions and answers. Use Ctrl+F in your browser to search all visible text, or use the filter bar above.' },
+  { q: 'How do I add a new question?', a: 'Click the Add Q&A button in the top right. A dialog will appear where you can enter both the question and its answer.' },
+  { q: 'Can I edit an existing entry?', a: 'Yes. Hover over any item and click the pencil icon to open it for editing.' },
+  { q: 'How does the filter work?', a: 'The filter bar searches across both questions and answers in real time. It highlights matching text and hides entries that do not match.' },
+  { q: 'Are my entries saved?', a: 'Yes. Your entries are stored in the cloud and tied to your authenticated account.' }
 ];
+
+const cloudState = {
+  client: null,
+  user: null,
+  authReady: false,
+  authBound: false,
+  statusMessage: ''
+};
 
 let items = [];
 let editingId = null;
 let openIds = new Set();
 let filterQuery = '';
 
-function getCookie(name) {
-  const prefix = `${name}=`;
-  const match = document.cookie
-    .split(';')
-    .map(part => part.trim())
-    .find(part => part.startsWith(prefix));
-  return match ? decodeURIComponent(match.slice(prefix.length)) : '';
+function getCloudConfig() {
+  const config = window.XVB8_CLOUD_CONFIG || {};
+  if (!config.supabaseUrl || !config.supabaseAnonKey) return null;
+  return config;
 }
 
-function setCookie(name, value, days) {
-  const expires = new Date(Date.now() + days * 864e5).toUTCString();
-  document.cookie = `${name}=${encodeURIComponent(value)}; expires=${expires}; path=/; SameSite=Lax`;
+function initSupabase() {
+  if (cloudState.client) return cloudState.client;
+  const config = getCloudConfig();
+  if (!config || !window.supabase) return null;
+  cloudState.client = window.supabase.createClient(config.supabaseUrl, config.supabaseAnonKey);
+  return cloudState.client;
 }
 
-function clearCookie(name) {
-  document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; SameSite=Lax`;
-}
-
-function fallbackHash(value) {
-  let hash = 2166136261;
-  for (let index = 0; index < value.length; index++) {
-    hash ^= value.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-  return `fallback-${(hash >>> 0).toString(16).padStart(8, '0')}`;
-}
-
-async function hashPassword(value) {
-  if (!window.crypto || !window.crypto.subtle || typeof TextEncoder === 'undefined') {
-    return fallbackHash(value);
-  }
-  const bytes = new TextEncoder().encode(value);
-  const digest = await crypto.subtle.digest('SHA-256', bytes);
-  return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
-}
-
-function hasProtectionEnabled() {
-  return Boolean(getCookie(PASSWORD_HASH_COOKIE));
-}
-
-function isProtectionAuthorized() {
-  const expectedHash = getCookie(PASSWORD_HASH_COOKIE);
-  return Boolean(expectedHash) && getCookie(PASSWORD_AUTH_COOKIE) === expectedHash;
-}
-
-function updateProtectionButton() {
-  const button = document.getElementById('protectionBtn');
+function updateAuthButton() {
+  const button = document.getElementById('authBtn');
   if (!button) return;
-  if (!hasProtectionEnabled()) {
-    button.textContent = 'Set Edit Lock';
+  if (!getCloudConfig()) {
+    button.textContent = 'Cloud Setup';
     return;
   }
-  button.textContent = isProtectionAuthorized() ? 'Edit Lock: On' : 'Edit Lock: Locked';
-}
-
-async function authorizeProtection(actionLabel) {
-  const expectedHash = getCookie(PASSWORD_HASH_COOKIE);
-  if (!expectedHash) return false;
-  if (isProtectionAuthorized()) return true;
-
-  const entered = window.prompt(`Enter the edit password to ${actionLabel}.`);
-  if (entered === null) return false;
-
-  const enteredHash = await hashPassword(entered);
-  if (enteredHash !== expectedHash) {
-    alert('Incorrect password.');
-    return false;
-  }
-
-  setCookie(PASSWORD_AUTH_COOKIE, expectedHash, AUTH_COOKIE_DAYS);
-  updateProtectionButton();
-  return true;
-}
-
-async function configureProtection() {
-  const hasExistingPassword = hasProtectionEnabled();
-  if (hasExistingPassword) {
-    const choice = window.prompt('Password options: type "change" to update it, "clear" to remove it, or leave blank to cancel.');
-    if (!choice) return;
-
-    if (choice.toLowerCase() === 'clear') {
-      if (!(await authorizeProtection('clear the edit password'))) return;
-      if (!window.confirm('Remove edit/delete password protection from this browser?')) return;
-      clearCookie(PASSWORD_HASH_COOKIE);
-      clearCookie(PASSWORD_AUTH_COOKIE);
-      updateProtectionButton();
-      alert('Edit password removed.');
-      return;
-    }
-
-    if (choice.toLowerCase() !== 'change') return;
-    if (!(await authorizeProtection('change the edit password'))) return;
-  }
-
-  const first = window.prompt(hasExistingPassword ? 'Enter the new edit password.' : 'Create an edit password for edit/delete actions.');
-  if (first === null) return;
-  if (!first.trim()) {
-    alert('Password cannot be empty.');
-    return;
-  }
-
-  const second = window.prompt('Re-enter the password to confirm.');
-  if (second === null) return;
-  if (first !== second) {
-    alert('Passwords did not match.');
-    return;
-  }
-
-  const hashed = await hashPassword(first);
-  setCookie(PASSWORD_HASH_COOKIE, hashed, PASSWORD_COOKIE_DAYS);
-  setCookie(PASSWORD_AUTH_COOKIE, hashed, AUTH_COOKIE_DAYS);
-  if (getCookie(PASSWORD_HASH_COOKIE) !== hashed) {
-    alert('Could not save the password cookie in this browser. Check your cookie settings and try again.');
-    return;
-  }
-  updateProtectionButton();
-  alert(hasExistingPassword ? 'Edit password updated.' : 'Edit password saved.');
-}
-
-async function ensureProtectedAccess(actionLabel) {
-  if (!hasProtectionEnabled()) {
-    const shouldCreate = window.confirm('Editing and deleting are unlocked. Set an edit password now?');
-    if (!shouldCreate) return false;
-    await configureProtection();
-    if (!hasProtectionEnabled()) return false;
-  }
-  return authorizeProtection(actionLabel);
-}
-
-function loadItems() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) { items = JSON.parse(raw); return; }
-  } catch(e) {}
-  items = defaultItems.map(i => ({...i}));
-  saveItems();
-}
-
-function saveItems() {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(items)); } catch(e) {}
-}
-
-function nextId() {
-  return items.length > 0 ? Math.max(...items.map(i => i.id)) + 1 : 1;
+  button.textContent = cloudState.user ? 'Sign Out' : 'Sign In';
 }
 
 function escapeHtml(str) {
-  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 function highlight(text, query) {
@@ -604,11 +489,232 @@ function highlight(text, query) {
   return escapeHtml(text).replace(re, '<mark>$1</mark>');
 }
 
+function loadLegacyItems() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter(item => item && typeof item.q === 'string' && typeof item.a === 'string')
+      .map(item => ({ q: item.q, a: item.a }));
+  } catch (error) {
+    return [];
+  }
+}
+
+function signedOutMessage() {
+  if (!getCloudConfig()) {
+    return 'Cloud backend not configured. Fill in cloud-config.js and apply the README setup steps.';
+  }
+  if (!cloudState.authReady) {
+    return 'Checking sign-in...';
+  }
+  return cloudState.statusMessage || 'Sign in to load and edit your private Q&A entries.';
+}
+
+async function refreshSession() {
+  const client = initSupabase();
+  if (!client) {
+    cloudState.user = null;
+    cloudState.authReady = true;
+    updateAuthButton();
+    renderList();
+    return;
+  }
+
+  const { data, error } = await client.auth.getSession();
+  cloudState.user = error ? null : (data.session?.user || null);
+  cloudState.authReady = true;
+  cloudState.statusMessage = error ? `Cloud auth failed: ${error.message}` : '';
+  updateAuthButton();
+}
+
+function bindAuthListener() {
+  if (cloudState.authBound) return;
+  const client = initSupabase();
+  if (!client) return;
+
+  client.auth.onAuthStateChange((_event, session) => {
+    cloudState.user = session?.user || null;
+    cloudState.authReady = true;
+    cloudState.statusMessage = '';
+    editingId = null;
+    if (!cloudState.user) items = [];
+    updateAuthButton();
+    void loadItems();
+  });
+
+  cloudState.authBound = true;
+}
+
+async function promptSignIn() {
+  const client = initSupabase();
+  if (!client) {
+    alert('Cloud backend not configured. Edit cloud-config.js with your Supabase URL and anon key.');
+    return false;
+  }
+
+  const email = window.prompt('Enter your account email.');
+  if (email === null) return false;
+  if (!email.trim()) {
+    alert('Email is required.');
+    return false;
+  }
+
+  const password = window.prompt('Enter your account password.');
+  if (password === null) return false;
+
+  const { error } = await client.auth.signInWithPassword({
+    email: email.trim(),
+    password
+  });
+
+  if (error) {
+    alert(error.message);
+    return false;
+  }
+
+  await refreshSession();
+  return Boolean(cloudState.user);
+}
+
+async function handleAuthButton() {
+  const client = initSupabase();
+  if (!client) {
+    alert('Cloud backend not configured. Edit cloud-config.js with your Supabase URL and anon key.');
+    return;
+  }
+
+  if (cloudState.user) {
+    const { error } = await client.auth.signOut();
+    if (error) {
+      alert(error.message);
+      return;
+    }
+    cloudState.user = null;
+    cloudState.statusMessage = 'Signed out.';
+    items = [];
+    updateAuthButton();
+    renderList();
+    return;
+  }
+
+  await promptSignIn();
+}
+
+async function ensureAuthenticated(actionLabel) {
+  if (cloudState.user) return true;
+  const signedIn = await promptSignIn();
+  if (!signedIn) return false;
+  if (!cloudState.user) {
+    alert(`Sign in is required to ${actionLabel}.`);
+    return false;
+  }
+  return true;
+}
+
+async function importInitialItems() {
+  const client = initSupabase();
+  const source = loadLegacyItems();
+  const seed = source.length ? source : defaultItems;
+  const payload = seed.map((item, index) => ({
+    owner_id: cloudState.user.id,
+    question: item.q,
+    answer: item.a,
+    position: index
+  }));
+  const { error } = await client.from(QA_TABLE).insert(payload);
+  if (error) throw error;
+}
+
+async function loadItems() {
+  const client = initSupabase();
+  if (!getCloudConfig()) {
+    items = [];
+    cloudState.statusMessage = 'Cloud backend not configured. Fill in cloud-config.js and README setup.';
+    updateAuthButton();
+    renderList();
+    return;
+  }
+
+  if (!cloudState.authReady) {
+    renderList();
+    return;
+  }
+
+  if (!cloudState.user) {
+    items = [];
+    renderList();
+    return;
+  }
+
+  let { data, error } = await client
+    .from(QA_TABLE)
+    .select('id, question, answer, position')
+    .eq('owner_id', cloudState.user.id)
+    .order('position', { ascending: true });
+
+  if (error) {
+    items = [];
+    cloudState.statusMessage = `Cloud load failed: ${error.message}`;
+    renderList();
+    return;
+  }
+
+  if (!data.length) {
+    try {
+      await importInitialItems();
+      const retry = await client
+        .from(QA_TABLE)
+        .select('id, question, answer, position')
+        .eq('owner_id', cloudState.user.id)
+        .order('position', { ascending: true });
+      data = retry.data || [];
+      error = retry.error || null;
+    } catch (importError) {
+      error = importError;
+    }
+  }
+
+  if (error) {
+    items = [];
+    cloudState.statusMessage = `Cloud load failed: ${error.message || error}`;
+    renderList();
+    return;
+  }
+
+  items = data.map(item => ({ id: item.id, q: item.question, a: item.answer }));
+  cloudState.statusMessage = '';
+  renderList();
+}
+
+async function syncPositions() {
+  const client = initSupabase();
+  if (!client || !cloudState.user || !items.length) return;
+  const payload = items.map((item, index) => ({
+    id: item.id,
+    owner_id: cloudState.user.id,
+    question: item.q,
+    answer: item.a,
+    position: index
+  }));
+  const { error } = await client.from(QA_TABLE).upsert(payload, { onConflict: 'id' });
+  if (error) throw error;
+}
+
 function renderList() {
   const list = document.getElementById('qaList');
   const noRes = document.getElementById('noResults');
   const stats = document.getElementById('stats');
   const q = filterQuery.trim().toLowerCase();
+
+  if (!getCloudConfig() || !cloudState.authReady || !cloudState.user) {
+    stats.textContent = signedOutMessage();
+    list.innerHTML = `<div class="empty-state"><div class="icon">◎</div><p>${escapeHtml(signedOutMessage())}</p></div>`;
+    noRes.classList.remove('visible');
+    return;
+  }
 
   const filtered = q ? items.filter(it =>
     it.q.toLowerCase().includes(q) || it.a.toLowerCase().includes(q)
@@ -619,7 +725,7 @@ function renderList() {
     : `${items.length} entr${items.length === 1 ? 'y' : 'ies'}`;
 
   if (items.length === 0) {
-    list.innerHTML = `<div class="empty-state"><div class="icon">◎</div><p>No entries yet. Click "Add Q&A" to get started.</p></div>`;
+    list.innerHTML = `<div class="empty-state"><div class="icon">◎</div><p>No entries yet. Click Add Q&A to get started.</p></div>`;
     noRes.classList.remove('visible');
     return;
   }
@@ -635,14 +741,14 @@ function renderList() {
     const isOpen = openIds.has(it.id);
     return `
     <div class="qa-item" data-id="${it.id}">
-      <div class="qa-question" tabindex="0" role="button" aria-expanded="${isOpen}" onclick="toggleItem(${it.id})">
+      <div class="qa-question" tabindex="0" role="button" aria-expanded="${isOpen}" onclick="toggleItem('${it.id}')">
         <span class="qa-number">${idx + 1}</span>
         <span class="qa-q-text">${highlight(it.q, filterQuery)}</span>
         <span class="qa-actions">
-          <button class="btn btn-edit-ghost" title="Edit" onclick="openEdit(event, ${it.id})">
+          <button class="btn btn-edit-ghost" title="Edit" onclick="openEdit(event, '${it.id}')">
             <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M1 12h2.5l7-7-2.5-2.5-7 7V12zm9.3-8.7a1 1 0 000-1.4L9.1.7a1 1 0 00-1.4 0L6.5 1.9l2.5 2.5 1.3-1.1z" fill="currentColor"/></svg>
           </button>
-          <button class="btn btn-danger-ghost" title="Delete" onclick="deleteItem(event, ${it.id})">
+          <button class="btn btn-danger-ghost" title="Delete" onclick="deleteItem(event, '${it.id}')">
             <svg width="12" height="13" viewBox="0 0 12 13" fill="none"><path d="M1 3.5h10M4 3.5V2h4v1.5M2.5 3.5l.6 7.5h5.8l.6-7.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
           </button>
         </span>
@@ -663,8 +769,8 @@ function toggleItem(id) {
 
 async function openEdit(e, id) {
   e.stopPropagation();
-  if (!(await ensureProtectedAccess('edit this entry'))) return;
-  const item = items.find(i => i.id === id);
+  if (!(await ensureAuthenticated('edit this entry'))) return;
+  const item = items.find(entry => entry.id === id);
   if (!item) return;
   editingId = id;
   document.getElementById('modalTitle').textContent = 'Edit Q&A';
@@ -676,19 +782,40 @@ async function openEdit(e, id) {
 
 async function deleteItem(e, id) {
   e.stopPropagation();
-  if (!(await ensureProtectedAccess('delete this entry'))) return;
-  const item = items.find(i => i.id === id);
+  if (!(await ensureAuthenticated('delete this entry'))) return;
+  const item = items.find(entry => entry.id === id);
   if (!item) return;
   const preview = item.q.length > 60 ? item.q.slice(0, 57) + '…' : item.q;
   if (!confirm(`Delete this entry?\n\n"${preview}"`)) return;
-  items = items.filter(i => i.id !== id);
+
+  const client = initSupabase();
+  const { error } = await client
+    .from(QA_TABLE)
+    .delete()
+    .eq('id', id)
+    .eq('owner_id', cloudState.user.id);
+
+  if (error) {
+    alert(error.message);
+    return;
+  }
+
+  items = items.filter(entry => entry.id !== id);
   openIds.delete(id);
-  saveItems();
+
+  try {
+    await syncPositions();
+  } catch (syncError) {
+    alert(syncError.message || syncError);
+    await loadItems();
+    return;
+  }
+
   renderList();
 }
 
 async function openAdd() {
-  if (!(await ensureProtectedAccess('add a new entry'))) return;
+  if (!(await ensureAuthenticated('add a new entry'))) return;
   editingId = null;
   document.getElementById('modalTitle').textContent = 'Add a new Q&A';
   document.getElementById('qInput').value = '';
@@ -708,25 +835,61 @@ async function saveModal() {
     alert('Please fill in both the question and the answer.');
     return;
   }
+  if (!(await ensureAuthenticated(editingId ? 'save changes to this entry' : 'add this entry'))) return;
+
+  const client = initSupabase();
+
   if (editingId !== null) {
-    if (!(await ensureProtectedAccess('save changes to this entry'))) return;
-    const item = items.find(i => i.id === editingId);
-    if (item) { item.q = q; item.a = a; }
+    const { error } = await client
+      .from(QA_TABLE)
+      .update({ question: q, answer: a })
+      .eq('id', editingId)
+      .eq('owner_id', cloudState.user.id);
+
+    if (error) {
+      alert(error.message);
+      return;
+    }
+
+    const item = items.find(entry => entry.id === editingId);
+    if (item) {
+      item.q = q;
+      item.a = a;
+    }
   } else {
-    if (!(await ensureProtectedAccess('add this entry'))) return;
-    items.push({ id: nextId(), q, a });
+    const { data, error } = await client
+      .from(QA_TABLE)
+      .insert({
+        owner_id: cloudState.user.id,
+        question: q,
+        answer: a,
+        position: items.length
+      })
+      .select('id, question, answer')
+      .single();
+
+    if (error) {
+      alert(error.message);
+      return;
+    }
+
+    items.push({ id: data.id, q: data.question, a: data.answer });
   }
-  saveItems();
+
   closeModal();
   renderList();
 }
 
-document.getElementById('addBtn').addEventListener('click', openAdd);
-document.getElementById('protectionBtn').addEventListener('click', function() {
-  configureProtection();
+document.getElementById('addBtn').addEventListener('click', function() {
+  void openAdd();
+});
+document.getElementById('authBtn').addEventListener('click', function() {
+  void handleAuthButton();
 });
 document.getElementById('cancelBtn').addEventListener('click', closeModal);
-document.getElementById('saveBtn').addEventListener('click', saveModal);
+document.getElementById('saveBtn').addEventListener('click', function() {
+  void saveModal();
+});
 
 document.getElementById('modalOverlay').addEventListener('click', function(e) {
   if (e.target === this) closeModal();
@@ -736,7 +899,7 @@ document.addEventListener('keydown', function(e) {
   if (e.key === 'Escape') closeModal();
   if ((e.key === 'Enter') && (e.ctrlKey || e.metaKey)) {
     const overlay = document.getElementById('modalOverlay');
-    if (overlay.classList.contains('open')) saveModal();
+    if (overlay.classList.contains('open')) void saveModal();
   }
 });
 
@@ -746,7 +909,7 @@ const clearBtn = document.getElementById('clearFilter');
 filterInput.addEventListener('input', function() {
   filterQuery = this.value;
   clearBtn.style.display = this.value ? 'block' : 'none';
-  if (this.value) openIds = new Set(items.map(i => i.id));
+  if (this.value) openIds = new Set(items.map(item => item.id));
   renderList();
 });
 
@@ -758,9 +921,10 @@ clearBtn.addEventListener('click', function() {
   filterInput.focus();
 });
 
-loadItems();
-updateProtectionButton();
+updateAuthButton();
+bindAuthListener();
 renderList();
+void refreshSession().then(loadItems);
 </script>
 </body>
 </html>
