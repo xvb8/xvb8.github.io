@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>My Project</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #faf8f4;
+      --surface: #ffffff;
+      --border: #e6e2d9;
+      --border-strong: #ccc8be;
+      --text: #1a1917;
+      --text-muted: #6b6760;
+      --text-hint: #a09c96;
+      --accent: #2a5f4e;
+      --accent-light: #e8f0ed;
+      --accent-hover: #1e4539;
+      --danger: #8b2e2e;
+      --danger-light: #fdf0f0;
+      --warn: #7a5c1e;
+      --warn-light: #fdf7e8;
+      --radius: 10px;
+      --shadow: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+      --shadow-md: 0 4px 12px rgba(0,0,0,0.08), 0 2px 4px rgba(0,0,0,0.04);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #18171a;
+        --surface: #222128;
+        --border: #333039;
+        --border-strong: #44414d;
+        --text: #f0eee9;
+        --text-muted: #968f9d;
+        --text-hint: #5e5868;
+        --accent: #5fbfa3;
+        --accent-light: #1a2e29;
+        --accent-hover: #7acfb3;
+        --danger: #e88e8e;
+        --danger-light: #2a1e1e;
+        --warn: #e0b96a;
+        --warn-light: #2a2318;
+      }
+    }
+
+    body {
+      font-family: 'DM Sans', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center; /* horizontal centering */
+      padding: 20px; /* top padding for small spacing */
+    }
+
+    h1 {
+      color: var(--accent);
+      margin: 30px 0 24px; /* halved top margin */
+      padding: 16px 24px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+    }
+
+    ul {
+      list-style: none;
+    }
+
+    li {
+      margin-bottom: 12px;
+    }
+
+    a {
+      text-decoration: none;
+      color: var(--accent);
+      padding: 12px 24px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      transition: all 0.2s ease;
+      display: inline-block;
+    }
+
+    a:hover {
+      background: var(--accent-light);
+      color: var(--surface);
+      box-shadow: var(--shadow-md);
+    }
+  </style>
+</head>
+<body>
+  <h1>My Project Links</h1>
+  <ul>
+    <li><a href="qa-manager.html">QA Manager</a></li>
+    <li><a href="timer-queue.html">Timer Queue</a></li>
+  </ul>
+</body>
+</html>
