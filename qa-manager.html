@@ -465,7 +465,19 @@ function clearCookie(name) {
   document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; SameSite=Lax`;
 }
 
+function fallbackHash(value) {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index++) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `fallback-${(hash >>> 0).toString(16).padStart(8, '0')}`;
+}
+
 async function hashPassword(value) {
+  if (!window.crypto || !window.crypto.subtle || typeof TextEncoder === 'undefined') {
+    return fallbackHash(value);
+  }
   const bytes = new TextEncoder().encode(value);
   const digest = await crypto.subtle.digest('SHA-256', bytes);
   return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
@@ -546,6 +558,10 @@ async function configureProtection() {
   const hashed = await hashPassword(first);
   setCookie(PASSWORD_HASH_COOKIE, hashed, PASSWORD_COOKIE_DAYS);
   setCookie(PASSWORD_AUTH_COOKIE, hashed, AUTH_COOKIE_DAYS);
+  if (getCookie(PASSWORD_HASH_COOKIE) !== hashed) {
+    alert('Could not save the password cookie in this browser. Check your cookie settings and try again.');
+    return;
+  }
   updateProtectionButton();
   alert(hasExistingPassword ? 'Edit password updated.' : 'Edit password saved.');
 }
