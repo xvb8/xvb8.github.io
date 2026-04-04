@@ -73,6 +73,7 @@
   }
 
   .brand { display: flex; flex-direction: column; gap: 4px; }
+  .header-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 
   h1 {
     font-family: 'Playfair Display', serif;
@@ -380,10 +381,13 @@
         <h1>Questions &amp; Answers</h1>
         <p class="subtitle">Use Ctrl+F to search all content — or use the filter below</p>
       </div>
-      <button class="btn btn-primary" id="addBtn">
-        <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
-        Add Q&A
-      </button>
+      <div class="header-actions">
+        <button class="btn btn-ghost" id="protectionBtn">Set Edit Lock</button>
+        <button class="btn btn-primary" id="addBtn">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          Add Q&amp;A
+        </button>
+      </div>
     </div>
   </div>
 </header>
@@ -425,6 +429,10 @@
 
 <script>
 const STORAGE_KEY = 'qa_items_v1';
+const PASSWORD_HASH_COOKIE = 'xvb8_edit_lock_hash';
+const PASSWORD_AUTH_COOKIE = 'xvb8_edit_lock_auth';
+const PASSWORD_COOKIE_DAYS = 365;
+const AUTH_COOKIE_DAYS = 7;
 
 const defaultItems = [
   { id: 1, q: "What is this app for?", a: "This is a personal Q&A manager. You can add, edit, delete, and search through questions and answers. Use Ctrl+F in your browser to search all visible text, or use the filter bar above." },
@@ -438,6 +446,119 @@ let items = [];
 let editingId = null;
 let openIds = new Set();
 let filterQuery = '';
+
+function getCookie(name) {
+  const prefix = `${name}=`;
+  const match = document.cookie
+    .split(';')
+    .map(part => part.trim())
+    .find(part => part.startsWith(prefix));
+  return match ? decodeURIComponent(match.slice(prefix.length)) : '';
+}
+
+function setCookie(name, value, days) {
+  const expires = new Date(Date.now() + days * 864e5).toUTCString();
+  document.cookie = `${name}=${encodeURIComponent(value)}; expires=${expires}; path=/; SameSite=Lax`;
+}
+
+function clearCookie(name) {
+  document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; SameSite=Lax`;
+}
+
+async function hashPassword(value) {
+  const bytes = new TextEncoder().encode(value);
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
+function hasProtectionEnabled() {
+  return Boolean(getCookie(PASSWORD_HASH_COOKIE));
+}
+
+function isProtectionAuthorized() {
+  const expectedHash = getCookie(PASSWORD_HASH_COOKIE);
+  return Boolean(expectedHash) && getCookie(PASSWORD_AUTH_COOKIE) === expectedHash;
+}
+
+function updateProtectionButton() {
+  const button = document.getElementById('protectionBtn');
+  if (!button) return;
+  if (!hasProtectionEnabled()) {
+    button.textContent = 'Set Edit Lock';
+    return;
+  }
+  button.textContent = isProtectionAuthorized() ? 'Edit Lock: On' : 'Edit Lock: Locked';
+}
+
+async function authorizeProtection(actionLabel) {
+  const expectedHash = getCookie(PASSWORD_HASH_COOKIE);
+  if (!expectedHash) return false;
+  if (isProtectionAuthorized()) return true;
+
+  const entered = window.prompt(`Enter the edit password to ${actionLabel}.`);
+  if (entered === null) return false;
+
+  const enteredHash = await hashPassword(entered);
+  if (enteredHash !== expectedHash) {
+    alert('Incorrect password.');
+    return false;
+  }
+
+  setCookie(PASSWORD_AUTH_COOKIE, expectedHash, AUTH_COOKIE_DAYS);
+  updateProtectionButton();
+  return true;
+}
+
+async function configureProtection() {
+  const hasExistingPassword = hasProtectionEnabled();
+  if (hasExistingPassword) {
+    const choice = window.prompt('Password options: type "change" to update it, "clear" to remove it, or leave blank to cancel.');
+    if (!choice) return;
+
+    if (choice.toLowerCase() === 'clear') {
+      if (!(await authorizeProtection('clear the edit password'))) return;
+      if (!window.confirm('Remove edit/delete password protection from this browser?')) return;
+      clearCookie(PASSWORD_HASH_COOKIE);
+      clearCookie(PASSWORD_AUTH_COOKIE);
+      updateProtectionButton();
+      alert('Edit password removed.');
+      return;
+    }
+
+    if (choice.toLowerCase() !== 'change') return;
+    if (!(await authorizeProtection('change the edit password'))) return;
+  }
+
+  const first = window.prompt(hasExistingPassword ? 'Enter the new edit password.' : 'Create an edit password for edit/delete actions.');
+  if (first === null) return;
+  if (!first.trim()) {
+    alert('Password cannot be empty.');
+    return;
+  }
+
+  const second = window.prompt('Re-enter the password to confirm.');
+  if (second === null) return;
+  if (first !== second) {
+    alert('Passwords did not match.');
+    return;
+  }
+
+  const hashed = await hashPassword(first);
+  setCookie(PASSWORD_HASH_COOKIE, hashed, PASSWORD_COOKIE_DAYS);
+  setCookie(PASSWORD_AUTH_COOKIE, hashed, AUTH_COOKIE_DAYS);
+  updateProtectionButton();
+  alert(hasExistingPassword ? 'Edit password updated.' : 'Edit password saved.');
+}
+
+async function ensureProtectedAccess(actionLabel) {
+  if (!hasProtectionEnabled()) {
+    const shouldCreate = window.confirm('Editing and deleting are unlocked. Set an edit password now?');
+    if (!shouldCreate) return false;
+    await configureProtection();
+    if (!hasProtectionEnabled()) return false;
+  }
+  return authorizeProtection(actionLabel);
+}
 
 function loadItems() {
   try {
@@ -524,8 +645,9 @@ function toggleItem(id) {
   renderList();
 }
 
-function openEdit(e, id) {
+async function openEdit(e, id) {
   e.stopPropagation();
+  if (!(await ensureProtectedAccess('edit this entry'))) return;
   const item = items.find(i => i.id === id);
   if (!item) return;
   editingId = id;
@@ -536,8 +658,9 @@ function openEdit(e, id) {
   document.getElementById('qInput').focus();
 }
 
-function deleteItem(e, id) {
+async function deleteItem(e, id) {
   e.stopPropagation();
+  if (!(await ensureProtectedAccess('delete this entry'))) return;
   const item = items.find(i => i.id === id);
   if (!item) return;
   const preview = item.q.length > 60 ? item.q.slice(0, 57) + '…' : item.q;
@@ -561,7 +684,7 @@ function closeModal() {
   document.getElementById('modalOverlay').classList.remove('open');
 }
 
-function saveModal() {
+async function saveModal() {
   const q = document.getElementById('qInput').value.trim();
   const a = document.getElementById('aInput').value.trim();
   if (!q || !a) {
@@ -569,6 +692,7 @@ function saveModal() {
     return;
   }
   if (editingId !== null) {
+    if (!(await ensureProtectedAccess('save changes to this entry'))) return;
     const item = items.find(i => i.id === editingId);
     if (item) { item.q = q; item.a = a; }
   } else {
@@ -580,6 +704,9 @@ function saveModal() {
 }
 
 document.getElementById('addBtn').addEventListener('click', openAdd);
+document.getElementById('protectionBtn').addEventListener('click', function() {
+  configureProtection();
+});
 document.getElementById('cancelBtn').addEventListener('click', closeModal);
 document.getElementById('saveBtn').addEventListener('click', saveModal);
 
@@ -614,6 +741,7 @@ clearBtn.addEventListener('click', function() {
 });
 
 loadItems();
+updateProtectionButton();
 renderList();
 </script>
 </body>

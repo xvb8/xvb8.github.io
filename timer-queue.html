@@ -59,6 +59,14 @@
     color: var(--text2);
   }
 
+  .header-meta {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
   .badge { font-family: var(--mono); font-size: 11px; color: var(--text3); letter-spacing: 0.08em; }
 
   .main { width: 100%; max-width: 700px; display: flex; flex-direction: column; gap: 10px; }
@@ -246,12 +254,20 @@
 <body>
 <header>
   <h1>Timer Queue</h1>
-  <span class="badge" id="total-badge"></span>
+  <div class="header-meta">
+    <button class="btn btn-ghost" id="protectionBtn">Set Edit Lock</button>
+    <span class="badge" id="total-badge"></span>
+  </div>
 </header>
 
 <div class="main" id="app"></div>
 
 <script>
+const PASSWORD_HASH_COOKIE = 'xvb8_edit_lock_hash';
+const PASSWORD_AUTH_COOKIE = 'xvb8_edit_lock_auth';
+const PASSWORD_COOKIE_DAYS = 365;
+const AUTH_COOKIE_DAYS = 7;
+
 const state = {
   timers: Array.from({length: 34}, (_, i) => ({ id: i+1, title: `Slide ${i+1}`, seconds: 2*60 })),
   current: 0,
@@ -266,6 +282,119 @@ const state = {
 
 let rafId = null;
 let lastTick = null;
+
+function getCookie(name) {
+  const prefix = `${name}=`;
+  const match = document.cookie
+    .split(';')
+    .map(part => part.trim())
+    .find(part => part.startsWith(prefix));
+  return match ? decodeURIComponent(match.slice(prefix.length)) : '';
+}
+
+function setCookie(name, value, days) {
+  const expires = new Date(Date.now() + days * 864e5).toUTCString();
+  document.cookie = `${name}=${encodeURIComponent(value)}; expires=${expires}; path=/; SameSite=Lax`;
+}
+
+function clearCookie(name) {
+  document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; SameSite=Lax`;
+}
+
+async function hashPassword(value) {
+  const bytes = new TextEncoder().encode(value);
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
+function hasProtectionEnabled() {
+  return Boolean(getCookie(PASSWORD_HASH_COOKIE));
+}
+
+function isProtectionAuthorized() {
+  const expectedHash = getCookie(PASSWORD_HASH_COOKIE);
+  return Boolean(expectedHash) && getCookie(PASSWORD_AUTH_COOKIE) === expectedHash;
+}
+
+function updateProtectionButton() {
+  const button = document.getElementById('protectionBtn');
+  if (!button) return;
+  if (!hasProtectionEnabled()) {
+    button.textContent = 'Set Edit Lock';
+    return;
+  }
+  button.textContent = isProtectionAuthorized() ? 'Edit Lock: On' : 'Edit Lock: Locked';
+}
+
+async function authorizeProtection(actionLabel) {
+  const expectedHash = getCookie(PASSWORD_HASH_COOKIE);
+  if (!expectedHash) return false;
+  if (isProtectionAuthorized()) return true;
+
+  const entered = window.prompt(`Enter the edit password to ${actionLabel}.`);
+  if (entered === null) return false;
+
+  const enteredHash = await hashPassword(entered);
+  if (enteredHash !== expectedHash) {
+    alert('Incorrect password.');
+    return false;
+  }
+
+  setCookie(PASSWORD_AUTH_COOKIE, expectedHash, AUTH_COOKIE_DAYS);
+  updateProtectionButton();
+  return true;
+}
+
+async function configureProtection() {
+  const hasExistingPassword = hasProtectionEnabled();
+  if (hasExistingPassword) {
+    const choice = window.prompt('Password options: type "change" to update it, "clear" to remove it, or leave blank to cancel.');
+    if (!choice) return;
+
+    if (choice.toLowerCase() === 'clear') {
+      if (!(await authorizeProtection('clear the edit password'))) return;
+      if (!window.confirm('Remove edit/delete password protection from this browser?')) return;
+      clearCookie(PASSWORD_HASH_COOKIE);
+      clearCookie(PASSWORD_AUTH_COOKIE);
+      updateProtectionButton();
+      alert('Edit password removed.');
+      return;
+    }
+
+    if (choice.toLowerCase() !== 'change') return;
+    if (!(await authorizeProtection('change the edit password'))) return;
+  }
+
+  const first = window.prompt(hasExistingPassword ? 'Enter the new edit password.' : 'Create an edit password for edit/delete actions.');
+  if (first === null) return;
+  if (!first.trim()) {
+    alert('Password cannot be empty.');
+    return;
+  }
+
+  const second = window.prompt('Re-enter the password to confirm.');
+  if (second === null) return;
+  if (first !== second) {
+    alert('Passwords did not match.');
+    return;
+  }
+
+  const hashed = await hashPassword(first);
+  setCookie(PASSWORD_HASH_COOKIE, hashed, PASSWORD_COOKIE_DAYS);
+  setCookie(PASSWORD_AUTH_COOKIE, hashed, AUTH_COOKIE_DAYS);
+  updateProtectionButton();
+  alert(hasExistingPassword ? 'Edit password updated.' : 'Edit password saved.');
+}
+
+async function ensureProtectedAccess(actionLabel) {
+  if (!hasProtectionEnabled()) {
+    const shouldCreate = window.confirm('Editing and deleting are unlocked. Set an edit password now?');
+    if (!shouldCreate) return false;
+    await configureProtection();
+    if (!hasProtectionEnabled()) return false;
+  }
+  return authorizeProtection(actionLabel);
+}
 
 function pad(n) { return String(n).padStart(2,'0'); }
 
@@ -419,7 +548,8 @@ function resetAll() {
   render();
 }
 
-function deleteTimer(id) {
+async function deleteTimer(id) {
+  if (!(await ensureProtectedAccess('delete this timer'))) return;
   const idx = state.timers.findIndex(t => t.id === id);
   if (idx < state.current) state.current = Math.max(0, state.current - 1);
   state.timers = state.timers.filter(t => t.id !== id);
@@ -435,15 +565,21 @@ function addTimer(title, minutes, seconds) {
   render();
 }
 
-function startEdit(id) { state.editingId = id; render(); }
+async function startEdit(id) {
+  if (!(await ensureProtectedAccess('edit this timer'))) return;
+  state.editingId = id;
+  render();
+}
 
-function startEditActive() {
+async function startEditActive() {
+  if (!(await ensureProtectedAccess('edit the active timer'))) return;
   if (state.running) pauseTimer();
   state.editingActive = true;
   render();
 }
 
-function saveEditActive() {
+async function saveEditActive() {
+  if (!(await ensureProtectedAccess('save changes to the active timer'))) return;
   const cur = state.timers[state.current];
   if (!cur) { state.editingActive = false; render(); return; }
   const title = document.getElementById('ae-title')?.value || '';
@@ -461,7 +597,8 @@ function saveEditActive() {
 
 function cancelEditActive() { state.editingActive = false; render(); }
 
-function saveEdit(id) {
+async function saveEdit(id) {
+  if (!(await ensureProtectedAccess('save changes to this timer'))) return;
   const title = document.getElementById(`et-${id}`)?.value || '';
   const mins = parseInt(document.getElementById(`em-${id}`)?.value) || 0;
   const secs = parseInt(document.getElementById(`es-${id}`)?.value) || 0;
@@ -605,6 +742,11 @@ function addFromForm() {
   setTimeout(() => document.getElementById('new-title')?.focus(), 0);
 }
 
+document.getElementById('protectionBtn').addEventListener('click', function() {
+  configureProtection();
+});
+
+updateProtectionButton();
 render();
 </script>
 </body>
