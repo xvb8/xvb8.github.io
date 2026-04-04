@@ -687,7 +687,8 @@ async function deleteItem(e, id) {
   renderList();
 }
 
-function openAdd() {
+async function openAdd() {
+  if (!(await ensureProtectedAccess('add a new entry'))) return;
   editingId = null;
   document.getElementById('modalTitle').textContent = 'Add a new Q&A';
   document.getElementById('qInput').value = '';
@@ -712,6 +713,7 @@ async function saveModal() {
     const item = items.find(i => i.id === editingId);
     if (item) { item.q = q; item.a = a; }
   } else {
+    if (!(await ensureProtectedAccess('add this entry'))) return;
     items.push({ id: nextId(), q, a });
   }
   saveItems();

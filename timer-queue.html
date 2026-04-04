@@ -573,7 +573,8 @@ async function deleteTimer(id) {
   render();
 }
 
-function addTimer(title, minutes, seconds) {
+async function addTimer(title, minutes, seconds) {
+  if (!(await ensureProtectedAccess('add a new timer'))) return;
   const s = (parseInt(minutes)||0)*60 + (parseInt(seconds)||0);
   if (!title.trim() || s <= 0) return;
   state.timers.push({ id: state.nextId++, title: title.trim(), seconds: s });
@@ -750,11 +751,11 @@ function render() {
   }
 }
 
-function addFromForm() {
+async function addFromForm() {
   const title = document.getElementById('new-title')?.value || '';
   const mins  = document.getElementById('new-min')?.value  || '0';
   const secs  = document.getElementById('new-sec')?.value  || '0';
-  addTimer(title, mins, secs);
+  await addTimer(title, mins, secs);
   setTimeout(() => document.getElementById('new-title')?.focus(), 0);
 }
 
