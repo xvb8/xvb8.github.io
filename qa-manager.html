@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Q&A Manager</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;1,400&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #faf8f4;
+    --surface: #ffffff;
+    --border: #e6e2d9;
+    --border-strong: #ccc8be;
+    --text: #1a1917;
+    --text-muted: #6b6760;
+    --text-hint: #a09c96;
+    --accent: #2a5f4e;
+    --accent-light: #e8f0ed;
+    --accent-hover: #1e4539;
+    --danger: #8b2e2e;
+    --danger-light: #fdf0f0;
+    --warn: #7a5c1e;
+    --warn-light: #fdf7e8;
+    --radius: 10px;
+    --shadow: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+    --shadow-md: 0 4px 12px rgba(0,0,0,0.08), 0 2px 4px rgba(0,0,0,0.04);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #18171a;
+      --surface: #222128;
+      --border: #333039;
+      --border-strong: #44414d;
+      --text: #f0eee9;
+      --text-muted: #968f9d;
+      --text-hint: #5e5868;
+      --accent: #5fbfa3;
+      --accent-light: #1a2e29;
+      --accent-hover: #7acfb3;
+      --danger: #e88e8e;
+      --danger-light: #2a1e1e;
+      --warn: #e0b96a;
+      --warn-light: #2a2318;
+    }
+  }
+
+  body {
+    font-family: 'DM Sans', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    padding: 0 0 80px;
+  }
+
+  header {
+    padding: 48px 0 32px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 40px;
+  }
+
+  .container { max-width: 760px; margin: 0 auto; padding: 0 24px; }
+
+  .header-inner {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+
+  .brand { display: flex; flex-direction: column; gap: 4px; }
+
+  h1 {
+    font-family: 'Playfair Display', serif;
+    font-size: 32px;
+    font-weight: 400;
+    letter-spacing: -0.5px;
+    color: var(--text);
+    line-height: 1.2;
+  }
+
+  .subtitle {
+    font-size: 13px;
+    color: var(--text-hint);
+    font-weight: 300;
+    letter-spacing: 0.04em;
+  }
+
+  .btn {
+    font-family: 'DM Sans', sans-serif;
+    font-size: 13px;
+    font-weight: 500;
+    padding: 8px 18px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    border: none;
+    outline: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+  }
+
+  .btn-primary {
+    background: var(--accent);
+    color: var(--bg);
+  }
+  .btn-primary:hover { background: var(--accent-hover); }
+
+  .btn-ghost {
+    background: transparent;
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+  }
+  .btn-ghost:hover {
+    border-color: var(--border-strong);
+    color: var(--text);
+    background: var(--surface);
+  }
+
+  .btn-danger-ghost {
+    background: transparent;
+    color: var(--danger);
+    border: 1px solid transparent;
+    padding: 6px 10px;
+  }
+  .btn-danger-ghost:hover { background: var(--danger-light); border-color: var(--danger); }
+
+  .btn-edit-ghost {
+    background: transparent;
+    color: var(--text-muted);
+    border: 1px solid transparent;
+    padding: 6px 10px;
+  }
+  .btn-edit-ghost:hover { background: var(--accent-light); color: var(--accent); border-color: var(--accent); }
+
+  .search-bar {
+    position: relative;
+    margin-bottom: 28px;
+  }
+
+  .search-bar input {
+    width: 100%;
+    padding: 10px 16px 10px 40px;
+    font-family: 'DM Sans', sans-serif;
+    font-size: 14px;
+    font-weight: 300;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  .search-bar input:focus { border-color: var(--accent); }
+  .search-bar input::placeholder { color: var(--text-hint); }
+
+  .search-icon {
+    position: absolute;
+    left: 13px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--text-hint);
+    pointer-events: none;
+  }
+
+  .clear-search {
+    position: absolute;
+    right: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: none;
+    border: none;
+    color: var(--text-hint);
+    cursor: pointer;
+    font-size: 16px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    display: none;
+  }
+  .clear-search:hover { color: var(--text); background: var(--border); }
+
+  .stats {
+    font-size: 12px;
+    color: var(--text-hint);
+    margin-bottom: 20px;
+    font-weight: 300;
+    letter-spacing: 0.02em;
+  }
+
+  .qa-list { display: flex; flex-direction: column; gap: 2px; }
+
+  .qa-item {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    transition: border-color 0.15s;
+  }
+  .qa-item:hover { border-color: var(--border-strong); }
+
+  .qa-question {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 16px 18px;
+    cursor: pointer;
+    user-select: none;
+    list-style: none;
+  }
+
+  .qa-number {
+    flex-shrink: 0;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: var(--accent-light);
+    color: var(--accent);
+    font-size: 11px;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .qa-q-text {
+    flex: 1;
+    font-size: 15px;
+    font-weight: 500;
+    color: var(--text);
+    line-height: 1.4;
+  }
+
+  .qa-actions {
+    display: flex;
+    gap: 2px;
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+  .qa-item:hover .qa-actions, .qa-item:focus-within .qa-actions { opacity: 1; }
+
+  .chevron {
+    flex-shrink: 0;
+    color: var(--text-hint);
+    font-size: 12px;
+    transition: transform 0.2s ease;
+    margin-left: 4px;
+  }
+
+  .qa-answer-wrap {
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.3s ease;
+  }
+  .qa-answer-wrap.open { max-height: 600px; }
+
+  .qa-answer {
+    padding: 0 18px 18px 52px;
+    font-size: 14px;
+    font-weight: 300;
+    color: var(--text-muted);
+    line-height: 1.7;
+    border-top: 1px solid var(--border);
+    padding-top: 14px;
+  }
+
+  mark {
+    background: #f5e68a;
+    color: #3a2e00;
+    border-radius: 2px;
+    padding: 0 1px;
+  }
+  @media (prefers-color-scheme: dark) {
+    mark { background: #5a4d00; color: #f5e68a; }
+  }
+
+  .modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.4);
+    z-index: 100;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    backdrop-filter: blur(2px);
+  }
+  .modal-overlay.open { display: flex; }
+
+  .modal {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 28px;
+    width: 100%;
+    max-width: 520px;
+    box-shadow: var(--shadow-md);
+    animation: slideUp 0.2s ease;
+  }
+
+  @keyframes slideUp {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .modal h2 {
+    font-family: 'Playfair Display', serif;
+    font-weight: 400;
+    font-size: 20px;
+    margin-bottom: 22px;
+    color: var(--text);
+  }
+
+  .form-group { margin-bottom: 16px; }
+  label {
+    display: block;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-muted);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    margin-bottom: 6px;
+  }
+
+  textarea, input[type="text"] {
+    width: 100%;
+    font-family: 'DM Sans', sans-serif;
+    font-size: 14px;
+    font-weight: 300;
+    color: var(--text);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    padding: 10px 12px;
+    resize: vertical;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  textarea { min-height: 100px; }
+  textarea:focus, input[type="text"]:focus { border-color: var(--accent); }
+
+  .modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 20px;
+  }
+
+  .empty-state {
+    text-align: center;
+    padding: 60px 24px;
+    color: var(--text-hint);
+  }
+  .empty-state .icon { font-size: 36px; margin-bottom: 12px; opacity: 0.4; }
+  .empty-state p { font-size: 14px; font-weight: 300; }
+
+  .no-results { display: none; }
+  .no-results.visible { display: block; }
+
+  .highlight-match .qa-q-text { color: var(--accent); }
+
+  @media (max-width: 560px) {
+    h1 { font-size: 26px; }
+    .header-inner { flex-direction: column; align-items: flex-start; }
+    .qa-answer { padding-left: 18px; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="container">
+    <div class="header-inner">
+      <div class="brand">
+        <h1>Questions &amp; Answers</h1>
+        <p class="subtitle">Use Ctrl+F to search all content — or use the filter below</p>
+      </div>
+      <button class="btn btn-primary" id="addBtn">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        Add Q&A
+      </button>
+    </div>
+  </div>
+</header>
+
+<div class="container">
+  <div class="search-bar">
+    <svg class="search-icon" width="16" height="16" viewBox="0 0 16 16" fill="none">
+      <circle cx="6.5" cy="6.5" r="4.5" stroke="currentColor" stroke-width="1.4"/>
+      <path d="M10 10l3.5 3.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+    </svg>
+    <input type="text" id="filterInput" placeholder="Filter questions and answers…" autocomplete="off">
+    <button class="clear-search" id="clearFilter" title="Clear filter">×</button>
+  </div>
+
+  <p class="stats" id="stats"></p>
+
+  <div class="qa-list" id="qaList"></div>
+  <p class="no-results" id="noResults">No entries match your filter.</p>
+</div>
+
+<!-- Modal -->
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal" role="dialog" aria-modal="true">
+    <h2 id="modalTitle">Add a new Q&A</h2>
+    <div class="form-group">
+      <label for="qInput">Question</label>
+      <textarea id="qInput" rows="2" placeholder="Type your question here…"></textarea>
+    </div>
+    <div class="form-group">
+      <label for="aInput">Answer</label>
+      <textarea id="aInput" rows="4" placeholder="Type the answer here…"></textarea>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" id="cancelBtn">Cancel</button>
+      <button class="btn btn-primary" id="saveBtn">Save</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const STORAGE_KEY = 'qa_items_v1';
+
+const defaultItems = [
+  { id: 1, q: "What is this app for?", a: "This is a personal Q&A manager. You can add, edit, delete, and search through questions and answers. Use Ctrl+F in your browser to search all visible text, or use the filter bar above." },
+  { id: 2, q: "How do I add a new question?", a: "Click the 'Add Q&A' button in the top right. A dialog will appear where you can enter both the question and its answer." },
+  { id: 3, q: "Can I edit an existing entry?", a: "Yes! Hover over any item and click the pencil icon (edit button) to open it for editing." },
+  { id: 4, q: "How does the filter work?", a: "The filter bar searches across both questions and answers in real time. It highlights matching text and hides entries that don't match." },
+  { id: 5, q: "Are my entries saved?", a: "Yes, all Q&As are saved to your browser's localStorage so they persist across page refreshes. They are private to your browser." },
+];
+
+let items = [];
+let editingId = null;
+let openIds = new Set();
+let filterQuery = '';
+
+function loadItems() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) { items = JSON.parse(raw); return; }
+  } catch(e) {}
+  items = defaultItems.map(i => ({...i}));
+  saveItems();
+}
+
+function saveItems() {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(items)); } catch(e) {}
+}
+
+function nextId() {
+  return items.length > 0 ? Math.max(...items.map(i => i.id)) + 1 : 1;
+}
+
+function escapeHtml(str) {
+  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function highlight(text, query) {
+  if (!query) return escapeHtml(text);
+  const safe = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(`(${safe})`, 'gi');
+  return escapeHtml(text).replace(re, '<mark>$1</mark>');
+}
+
+function renderList() {
+  const list = document.getElementById('qaList');
+  const noRes = document.getElementById('noResults');
+  const stats = document.getElementById('stats');
+  const q = filterQuery.trim().toLowerCase();
+
+  const filtered = q ? items.filter(it =>
+    it.q.toLowerCase().includes(q) || it.a.toLowerCase().includes(q)
+  ) : items;
+
+  stats.textContent = q
+    ? `${filtered.length} of ${items.length} entries`
+    : `${items.length} entr${items.length === 1 ? 'y' : 'ies'}`;
+
+  if (items.length === 0) {
+    list.innerHTML = `<div class="empty-state"><div class="icon">◎</div><p>No entries yet. Click "Add Q&A" to get started.</p></div>`;
+    noRes.classList.remove('visible');
+    return;
+  }
+
+  if (filtered.length === 0) {
+    list.innerHTML = '';
+    noRes.classList.add('visible');
+    return;
+  }
+  noRes.classList.remove('visible');
+
+  list.innerHTML = filtered.map((it, idx) => {
+    const isOpen = openIds.has(it.id);
+    return `
+    <div class="qa-item" data-id="${it.id}">
+      <div class="qa-question" tabindex="0" role="button" aria-expanded="${isOpen}" onclick="toggleItem(${it.id})">
+        <span class="qa-number">${idx + 1}</span>
+        <span class="qa-q-text">${highlight(it.q, filterQuery)}</span>
+        <span class="qa-actions">
+          <button class="btn btn-edit-ghost" title="Edit" onclick="openEdit(event, ${it.id})">
+            <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M1 12h2.5l7-7-2.5-2.5-7 7V12zm9.3-8.7a1 1 0 000-1.4L9.1.7a1 1 0 00-1.4 0L6.5 1.9l2.5 2.5 1.3-1.1z" fill="currentColor"/></svg>
+          </button>
+          <button class="btn btn-danger-ghost" title="Delete" onclick="deleteItem(event, ${it.id})">
+            <svg width="12" height="13" viewBox="0 0 12 13" fill="none"><path d="M1 3.5h10M4 3.5V2h4v1.5M2.5 3.5l.6 7.5h5.8l.6-7.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+        </span>
+        <span class="chevron" style="${isOpen ? 'transform:rotate(180deg)' : ''}">▾</span>
+      </div>
+      <div class="qa-answer-wrap ${isOpen ? 'open' : ''}">
+        <div class="qa-answer">${highlight(it.a, filterQuery)}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function toggleItem(id) {
+  if (openIds.has(id)) openIds.delete(id);
+  else openIds.add(id);
+  renderList();
+}
+
+function openEdit(e, id) {
+  e.stopPropagation();
+  const item = items.find(i => i.id === id);
+  if (!item) return;
+  editingId = id;
+  document.getElementById('modalTitle').textContent = 'Edit Q&A';
+  document.getElementById('qInput').value = item.q;
+  document.getElementById('aInput').value = item.a;
+  document.getElementById('modalOverlay').classList.add('open');
+  document.getElementById('qInput').focus();
+}
+
+function deleteItem(e, id) {
+  e.stopPropagation();
+  const item = items.find(i => i.id === id);
+  if (!item) return;
+  const preview = item.q.length > 60 ? item.q.slice(0, 57) + '…' : item.q;
+  if (!confirm(`Delete this entry?\n\n"${preview}"`)) return;
+  items = items.filter(i => i.id !== id);
+  openIds.delete(id);
+  saveItems();
+  renderList();
+}
+
+function openAdd() {
+  editingId = null;
+  document.getElementById('modalTitle').textContent = 'Add a new Q&A';
+  document.getElementById('qInput').value = '';
+  document.getElementById('aInput').value = '';
+  document.getElementById('modalOverlay').classList.add('open');
+  document.getElementById('qInput').focus();
+}
+
+function closeModal() {
+  document.getElementById('modalOverlay').classList.remove('open');
+}
+
+function saveModal() {
+  const q = document.getElementById('qInput').value.trim();
+  const a = document.getElementById('aInput').value.trim();
+  if (!q || !a) {
+    alert('Please fill in both the question and the answer.');
+    return;
+  }
+  if (editingId !== null) {
+    const item = items.find(i => i.id === editingId);
+    if (item) { item.q = q; item.a = a; }
+  } else {
+    items.push({ id: nextId(), q, a });
+  }
+  saveItems();
+  closeModal();
+  renderList();
+}
+
+document.getElementById('addBtn').addEventListener('click', openAdd);
+document.getElementById('cancelBtn').addEventListener('click', closeModal);
+document.getElementById('saveBtn').addEventListener('click', saveModal);
+
+document.getElementById('modalOverlay').addEventListener('click', function(e) {
+  if (e.target === this) closeModal();
+});
+
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape') closeModal();
+  if ((e.key === 'Enter') && (e.ctrlKey || e.metaKey)) {
+    const overlay = document.getElementById('modalOverlay');
+    if (overlay.classList.contains('open')) saveModal();
+  }
+});
+
+const filterInput = document.getElementById('filterInput');
+const clearBtn = document.getElementById('clearFilter');
+
+filterInput.addEventListener('input', function() {
+  filterQuery = this.value;
+  clearBtn.style.display = this.value ? 'block' : 'none';
+  if (this.value) openIds = new Set(items.map(i => i.id));
+  renderList();
+});
+
+clearBtn.addEventListener('click', function() {
+  filterInput.value = '';
+  filterQuery = '';
+  this.style.display = 'none';
+  renderList();
+  filterInput.focus();
+});
+
+loadItems();
+renderList();
+</script>
+</body>
+</html>
