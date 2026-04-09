@@ -582,7 +582,9 @@ async function saveTimerState(alertOnError = false) {
     current_index: state.timers.length ? state.current : 0,
     elapsed: Math.round(state.elapsedMs),
     sound: state.sound,
-    done: state.done
+    done: state.done,
+    buffer_total_ms: Math.round(state.bufferTotalMs),
+    buffer_remaining_ms: Math.round(state.bufferRemainingMs)
   };
 
   const { error } = await client.from(TIMER_STATE_TABLE).upsert(payload, { onConflict: 'owner_id' });
@@ -643,7 +645,7 @@ async function loadCloudState() {
 
   const stateResult = await client
     .from(TIMER_STATE_TABLE)
-    .select('current_index, elapsed, sound, done')
+    .select('current_index, elapsed, sound, done, buffer_total_ms, buffer_remaining_ms')
     .eq('owner_id', cloudState.user.id)
     .maybeSingle();
 
@@ -666,11 +668,14 @@ async function loadCloudState() {
     seconds: timer.seconds
   }));
 
-  const saved = stateResult.data || { current_index: 0, elapsed: 0, sound: true, done: false };
+  const saved = stateResult.data || { current_index: 0, elapsed: 0, sound: true, done: false, buffer_total_ms: 89000, buffer_remaining_ms: 89000 };
   state.current = Number.isInteger(saved.current_index) ? saved.current_index : 0;
   state.elapsedMs = Number.isInteger(saved.elapsed) ? saved.elapsed : 0;
   state.sound = saved.sound !== false;
   state.done = Boolean(saved.done);
+  state.bufferTotalMs = Number.isInteger(saved.buffer_total_ms) ? saved.buffer_total_ms : 89000;
+  state.bufferRemainingMs = Number.isInteger(saved.buffer_remaining_ms) ? saved.buffer_remaining_ms : 89000;
+  state.bufferActive = false;
   state.running = false;
   state.editingId = null;
   state.editingActive = false;

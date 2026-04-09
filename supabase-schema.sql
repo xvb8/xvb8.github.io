@@ -24,6 +24,8 @@ create table if not exists public.timer_state (
   elapsed integer not null default 0 check (elapsed >= 0),
   sound boolean not null default true,
   done boolean not null default false,
+  buffer_total_ms integer not null default 89000 check (buffer_total_ms >= 0),
+  buffer_remaining_ms integer not null default 89000 check (buffer_remaining_ms >= 0),
   updated_at timestamptz not null default timezone('utc', now())
 );
 
