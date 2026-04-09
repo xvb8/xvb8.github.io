@@ -254,6 +254,10 @@
   .row-btn:hover { color: var(--text); background: var(--surface3); }
   .row-btn.del:hover { color: var(--danger); }
 
+  .timer-row[draggable="true"] { cursor: grab; }
+  .timer-row.dragging { opacity: 0.35; }
+  .timer-row.drag-over { border-color: var(--active-light); box-shadow: 0 -2px 0 0 var(--active-light); }
+
   .add-area {
     background: var(--surface);
     border: 1px dashed var(--border2);
@@ -1031,6 +1035,52 @@ async function saveEdit(id) {
   await saveTimerState(true);
 }
 
+let dragSrcIndex = null;
+
+function onDragStart(e) {
+  dragSrcIndex = Number(e.currentTarget.dataset.index);
+  e.currentTarget.classList.add('dragging');
+  e.dataTransfer.effectAllowed = 'move';
+}
+
+function onDragOver(e) {
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  const row = e.currentTarget;
+  document.querySelectorAll('.timer-row.drag-over').forEach(el => el.classList.remove('drag-over'));
+  row.classList.add('drag-over');
+}
+
+function onDragLeave(e) {
+  e.currentTarget.classList.remove('drag-over');
+}
+
+function onDrop(e) {
+  e.preventDefault();
+  e.currentTarget.classList.remove('drag-over');
+  const toIndex = Number(e.currentTarget.dataset.index);
+  if (dragSrcIndex === null || dragSrcIndex === toIndex) return;
+  reorderTimer(dragSrcIndex, toIndex);
+}
+
+function onDragEnd(e) {
+  e.currentTarget.classList.remove('dragging');
+  document.querySelectorAll('.timer-row.drag-over').forEach(el => el.classList.remove('drag-over'));
+  dragSrcIndex = null;
+}
+
+function reorderTimer(from, to) {
+  const activeId = state.timers[state.current]?.id;
+  const [moved] = state.timers.splice(from, 1);
+  state.timers.splice(to, 0, moved);
+  if (activeId) {
+    state.current = state.timers.findIndex(t => t.id === activeId);
+  }
+  syncCurrentBounds();
+  render();
+  void saveTimerPositions(true).then(() => saveTimerState(true));
+}
+
 function toggleSound() {
   state.sound = !state.sound;
   render();
@@ -1182,7 +1232,7 @@ function render() {
       return;
     }
 
-    html += `<div class="timer-row${isDone ? ' done' : ''}">
+    html += `<div class="timer-row${isDone ? ' done' : ''}" draggable="true" data-index="${index}" ondragstart="onDragStart(event)" ondragover="onDragOver(event)" ondragleave="onDragLeave(event)" ondrop="onDrop(event)" ondragend="onDragEnd(event)">
       <span class="row-index">${isDone ? '✓' : index + 1}</span>
       <span class="row-title">${esc(timer.title)}</span>
       <span class="row-time">${fmt(timer.seconds)}</span>
