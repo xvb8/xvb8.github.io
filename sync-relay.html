@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Timer Sync Relay</title>
+<style>
+  body { margin:0; font-family:'DM Sans',system-ui,sans-serif; background:#18171a; color:#f0eee9; display:flex; align-items:center; justify-content:center; height:100vh; }
+  .status { text-align:center; font-size:13px; opacity:0.7; }
+  .dot { display:inline-block; width:8px; height:8px; border-radius:50%; background:#5fbfa3; margin-right:6px; vertical-align:middle; }
+</style>
+</head>
+<body>
+<div class="status"><span class="dot"></span>Relay active — keep this window open</div>
+<script>
+  var channel = new BroadcastChannel('timer-queue-sync');
+  window.addEventListener('message', function(e) {
+    var data = e.data;
+    if (!data || typeof data !== 'object') return;
+    if (data.type === 'hello' || data.type === 'slideChange') {
+      channel.postMessage(data);
+    }
+  });
+  if (window.opener) {
+    window.opener.postMessage({type: 'relayReady'}, '*');
+  }
+</script>
+</body>
+</html>
