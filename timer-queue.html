@@ -869,7 +869,6 @@ function skipAddToBuffer() {
   const remainingMs = cur.seconds * 1000 - state.elapsedMs;
   if (remainingMs > 0) {
     state.bufferRemainingMs += remainingMs;
-    state.bufferTotalMs += remainingMs;
   }
   state.bufferActive = false;
   if (state.current >= state.timers.length - 1) {
