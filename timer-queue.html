@@ -962,7 +962,7 @@ function cancelEditBuffer() {
 
 const SYNC_RELAY_URL = new URL('sync-relay.html', location.href).href;
 
-const SLIDES_SNIPPET = `(function(){var R=window.open('${SYNC_RELAY_URL.replace(/'/g, "\\'")}','timer-sync-relay','width=320,height=60');var idx=-1,ready=false,q=[];function send(msg){if(ready)R.postMessage(msg,'${new URL(SYNC_RELAY_URL).origin}');else q.push(msg)}window.addEventListener('message',function(e){if(e.data&&e.data.type==='relayReady'){ready=true;q.forEach(function(m){R.postMessage(m,'${new URL(SYNC_RELAY_URL).origin}')});q=[];console.log('[TimerSync] Relay connected')}});function getIdx(){var thumbs=document.querySelectorAll('[class*="punch-filmstrip"] [aria-roledescription="slide"]');if(!thumbs.length)thumbs=document.querySelectorAll('.punch-filmstrip-thumbnail');for(var i=0;i<thumbs.length;i++){var el=thumbs[i],p=el.parentElement;if(el.matches('[aria-selected="true"],[tabindex="0"],.punch-filmstrip-thumbnail-selected'))return i;if(p&&p.matches('.punch-filmstrip-thumbnail-selected,[aria-selected="true"]'))return i;if(el.matches(':focus-within'))return i;var cls=(el.className||'')+(p?(' '+(p.className||'')):'');if(cls.indexOf('selected')!==-1||cls.indexOf('active')!==-1||cls.indexOf('current')!==-1)return i}var h=location.hash.match(/slide=id\\.([\\w_-]+)/);if(h){thumbs=document.querySelectorAll('[class*="punch-filmstrip"] [aria-roledescription="slide"]');for(var j=0;j<thumbs.length;j++){if((thumbs[j].getAttribute('aria-label')||'').indexOf(h[1])!==-1)return j}}return idx>=0?idx:0}send({type:'hello'});idx=getIdx();send({type:'slideChange',slideIndex:idx});console.log('[TimerSync] Started — slide',idx+1);setInterval(function(){var n=getIdx();if(n!==idx){idx=n;send({type:'slideChange',slideIndex:idx});console.log('[TimerSync] Slide',idx+1)}},300);window.addEventListener('hashchange',function(){var n=getIdx();if(n!==idx){idx=n;send({type:'slideChange',slideIndex:idx});console.log('[TimerSync] Slide',idx+1)}});console.log('[TimerSync] Listening for slide changes…')})();`;
+const SLIDES_SNIPPET = `(function(){var R=window.open('${SYNC_RELAY_URL.replace(/'/g, "\\'")}','timer-sync-relay','width=320,height=60');var idx=0,ready=false,q=[];function send(msg){if(ready)R.postMessage(msg,'${new URL(SYNC_RELAY_URL).origin}');else q.push(msg)}window.addEventListener('message',function(e){if(e.data&&e.data.type==='relayReady'){ready=true;q.forEach(function(m){R.postMessage(m,'${new URL(SYNC_RELAY_URL).origin}')});q=[];console.log('[TimerSync] Relay connected')}});send({type:'hello'});send({type:'slideChange',slideIndex:0});document.addEventListener('keydown',function(e){var k=e.key,prev=idx;if(k==='ArrowRight'||k==='ArrowDown'||k==='PageDown'||k===' ')idx++;else if(k==='ArrowLeft'||k==='ArrowUp'||k==='PageUp')idx=Math.max(0,idx-1);else if(k==='Home')idx=0;else if(k==='End')idx=9999;else return;if(idx!==prev){send({type:'slideChange',slideIndex:idx});console.log('[TimerSync] Slide',idx+1)}},true);console.log('[TimerSync] Keyboard tracking active — slide 1. Use arrow keys to navigate.')})();`;
 
 function initSlideSync() {
   if (syncChannel) syncChannel.close();
@@ -1378,13 +1378,13 @@ function render() {
   if (!state.done && state.timers.length && !state.editingActive) {
     const dotClass = state.slideSyncConnected ? 'connected' : (state.slideSyncEnabled ? 'waiting' : '');
     const sectionClass = state.slideSyncConnected ? ' connected' : '';
-    const statusText = state.slideSyncConnected ? 'Connected to Google Slides' : (state.slideSyncEnabled ? 'Waiting for Slides…' : 'Off — paste snippet in Slides console');
+    const statusText = state.slideSyncConnected ? 'Connected to Google Slides' : (state.slideSyncEnabled ? 'Waiting for Slides…' : 'Off — paste snippet in Speaker Notes console');
     html += `<div class="sync-section${sectionClass}">
       <span class="sync-dot ${dotClass}"></span>
       <span class="sync-label">slides sync</span>
       <span style="font-size:12px;color:var(--text3);">${statusText}</span>
       <div class="sync-actions">
-        ${state.slideSyncEnabled ? '<button class="btn" id="copy-snippet-btn" onclick="copySyncSnippet()" style="font-size:11px;padding:4px 10px;" title="Copy the Google Slides console snippet to clipboard">📋 Copy snippet</button>' : ''}
+        ${state.slideSyncEnabled ? '<button class="btn" id="copy-snippet-btn" onclick="copySyncSnippet()" style="font-size:11px;padding:4px 10px;" title="Paste in Speaker Notes window DevTools console (Presenter view)">📋 Copy snippet</button>' : ''}
         <button class="btn${state.slideSyncEnabled ? ' btn-primary' : ''}" onclick="toggleSlideSync()" style="font-size:12px;padding:5px 12px;">${state.slideSyncEnabled ? '■ Stop' : '▶ Sync'}</button>
       </div>
     </div>`;
