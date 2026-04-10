@@ -862,6 +862,31 @@ function toggleBuffer() {
   if (state.running) rafId = requestAnimationFrame(runLoop);
 }
 
+function skipAddToBuffer() {
+  if (state.done || !state.timers.length) return;
+  const cur = state.timers[state.current];
+  if (!cur) return;
+  const remainingMs = cur.seconds * 1000 - state.elapsedMs;
+  if (remainingMs > 0) {
+    state.bufferRemainingMs += remainingMs;
+    state.bufferTotalMs += remainingMs;
+  }
+  state.bufferActive = false;
+  if (state.current >= state.timers.length - 1) {
+    state.running = false;
+    state.done = true;
+    state.current = Math.max(0, state.timers.length - 1);
+    state.elapsedMs = 0;
+  } else {
+    state.current++;
+    state.elapsedMs = 0;
+  }
+  lastTick = null;
+  render();
+  void saveTimerState();
+  if (state.running) rafId = requestAnimationFrame(runLoop);
+}
+
 function startEditBuffer() {
   if (state.running) pauseTimer();
   state.bufferActive = false;
@@ -1206,6 +1231,7 @@ function render() {
         <span class="buffer-time" id="buffer-display">${fmtMs(state.bufferRemainingMs)}</span>
         <div class="buffer-actions">
           <button class="btn${state.bufferActive ? ' btn-primary' : ''}" onclick="toggleBuffer()" style="font-size:12px;padding:5px 12px;">${state.bufferActive ? '■ Stop' : '▶ Use'}</button>
+          <button class="btn" onclick="skipAddToBuffer()" title="Skip to next timer and add remaining time to buffer" style="font-size:12px;padding:5px 12px;">⏭ Bank</button>
           <button class="row-btn" onclick="startEditBuffer()" title="Edit buffer time" style="font-size:12px;">✎</button>
         </div>
       </div>`;
