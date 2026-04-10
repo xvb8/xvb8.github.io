@@ -1443,11 +1443,6 @@ function render() {
 
   app.innerHTML = html;
 
-  const queue = document.querySelector('.queue-scroll');
-  if (queue) {
-    const first = queue.querySelector('.timer-row:not(.done)');
-    if (first) setTimeout(() => first.scrollIntoView({ block: 'nearest', behavior: 'smooth' }), 50);
-  }
 }
 
 async function addFromForm() {
