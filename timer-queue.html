@@ -543,18 +543,21 @@ function fmt(s) {
 }
 
 function fmtMs(ms) {
-  ms = Math.max(0, ms);
+  const neg = ms < 0;
+  ms = Math.abs(ms);
   const totalSec = Math.floor(ms / 1000);
   const millis = Math.floor(ms % 1000);
   const h = Math.floor(totalSec / 3600);
   const m = Math.floor((totalSec % 3600) / 60);
   const s = totalSec % 60;
   const ms3 = String(millis).padStart(3, '0');
-  return h > 0 ? `${pad(h)}:${pad(m)}:${pad(s)}.${ms3}` : `${pad(m)}:${pad(s)}.${ms3}`;
+  const t = h > 0 ? `${pad(h)}:${pad(m)}:${pad(s)}.${ms3}` : `${pad(m)}:${pad(s)}.${ms3}`;
+  return neg ? `-${t}` : t;
 }
 
 function fmtMsHtml(ms) {
-  ms = Math.max(0, ms);
+  const neg = ms < 0;
+  ms = Math.abs(ms);
   const totalSec = Math.floor(ms / 1000);
   const millis = Math.floor(ms % 1000);
   const h = Math.floor(totalSec / 3600);
@@ -562,7 +565,7 @@ function fmtMsHtml(ms) {
   const s = totalSec % 60;
   const ms3 = String(millis).padStart(3, '0');
   const main = h > 0 ? `${pad(h)}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
-  return `${main}<span class="timer-ms">.${ms3}</span>`;
+  return `${neg ? '-' : ''}${main}<span class="timer-ms">.${ms3}</span>`;
 }
 
 function fmtShort(s) {
@@ -759,9 +762,12 @@ function runLoop(ts) {
   const totalMs = cur.seconds * 1000;
   if (state.elapsedMs >= totalMs) {
     if (state.slideSyncEnabled) {
-      // Slide sync active: don't auto-advance, let timer run into overtime
+      // Slide sync active: don't auto-advance, drain buffer in real-time
+      const prevElapsed = state.elapsedMs - delta;
+      const overtimeDelta = prevElapsed >= totalMs ? delta : (state.elapsedMs - totalMs);
+      state.bufferRemainingMs -= overtimeDelta;
       // Beep once when first crossing the boundary
-      if (state.elapsedMs - delta < totalMs) beep();
+      if (prevElapsed < totalMs) beep();
       updateActiveDisplay();
       rafId = requestAnimationFrame(runLoop);
       return;
@@ -809,7 +815,7 @@ function updateActiveDisplay() {
   const disp = document.getElementById('timer-display');
   if (disp) {
     if (isOvertime) {
-      disp.innerHTML = '-' + fmtMsHtml(-remainingMs);
+      disp.innerHTML = state.slideSyncEnabled ? fmtMsHtml(0) : ('-' + fmtMsHtml(-remainingMs));
       disp.classList.remove('urgent-anim');
       disp.classList.add('overtime');
     } else {
@@ -1023,8 +1029,10 @@ function handleSlideChange(targetIndex) {
         // Finished early — bank remaining time
         state.bufferRemainingMs += remainingMs;
       } else if (remainingMs < 0) {
-        // Went overtime — draw from buffer
-        state.bufferRemainingMs = Math.max(0, state.bufferRemainingMs + remainingMs);
+        // Went overtime — skip if already drained in real-time by runLoop
+        if (!state.slideSyncEnabled) {
+          state.bufferRemainingMs += remainingMs;
+        }
       }
     }
   }
@@ -1322,9 +1330,9 @@ function render() {
     const paused = !state.running;
     const isOvertime = remainingMs < 0;
     const fillColor = isOvertime ? 'var(--danger)' : (state.bufferActive ? 'var(--accent2)' : (paused ? 'var(--accent2)' : 'var(--active-light)'));
-    const activeLabel = isOvertime ? '⏱ overtime' : (state.bufferActive ? '⏳ buffer active' : (state.running ? 'now running' : 'paused'));
+    const activeLabel = isOvertime ? (state.slideSyncEnabled ? '⏳ drawing from buffer' : '⏱ overtime') : (state.bufferActive ? '⏳ buffer active' : (state.running ? 'now running' : 'paused'));
     const clampedPct = Math.min(pct, 100);
-    const timerHtml = isOvertime ? ('-' + fmtMsHtml(-remainingMs)) : fmtMsHtml(remainingMs);
+    const timerHtml = isOvertime ? (state.slideSyncEnabled ? fmtMsHtml(0) : ('-' + fmtMsHtml(-remainingMs))) : fmtMsHtml(remainingMs);
     const timerClass = isOvertime ? ' class="overtime"' : (remainingMs <= 10000 && remainingMs > 0 && state.running ? ' class="urgent-anim"' : '');
     html = `<div class="active-card">
       <div id="progress-stripe" style="position:absolute;top:0;left:0;height:2px;background:${fillColor};width:${clampedPct}%"></div>
