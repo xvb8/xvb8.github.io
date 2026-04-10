@@ -394,6 +394,7 @@ const state = {
 let rafId = null;
 let lastTick = null;
 let syncChannel = null;
+let hiddenAt = null;
 
 function getCloudConfig() {
   const config = window.XVB8_CLOUD_CONFIG || {};
@@ -737,6 +738,50 @@ function beep() {
   }
 }
 
+function applyElapsedTime(ms) {
+  if (!state.running || ms <= 0) return;
+  if (state.bufferActive) {
+    state.bufferRemainingMs -= ms;
+    if (state.bufferRemainingMs <= 0) {
+      state.bufferRemainingMs = 0;
+      state.bufferActive = false;
+      beep();
+    }
+    return;
+  }
+  state.elapsedMs += ms;
+  if (state.slideSyncEnabled) {
+    const cur = state.timers[state.current];
+    if (cur) {
+      const totalMs = cur.seconds * 1000;
+      if (state.elapsedMs > totalMs) {
+        const prevElapsed = state.elapsedMs - ms;
+        const prevOvertime = Math.max(0, prevElapsed - totalMs);
+        const curOvertime = state.elapsedMs - totalMs;
+        state.bufferRemainingMs -= (curOvertime - prevOvertime);
+        if (prevElapsed < totalMs) beep();
+      }
+    }
+    return;
+  }
+  let beeped = false;
+  while (true) {
+    const cur = state.timers[state.current];
+    if (!cur) break;
+    const totalMs = cur.seconds * 1000;
+    if (state.elapsedMs < totalMs) break;
+    if (!beeped) { beep(); beeped = true; }
+    state.elapsedMs -= totalMs;
+    if (state.current >= state.timers.length - 1) {
+      state.running = false;
+      state.done = true;
+      state.elapsedMs = 0;
+      break;
+    }
+    state.current++;
+  }
+}
+
 function runLoop(ts) {
   if (!state.running) return;
   if (lastTick === null) { lastTick = ts; }
@@ -828,10 +873,12 @@ function updateActiveDisplay() {
       else disp.classList.remove('urgent-anim');
     }
   }
+  const paused = !state.running;
+  const fillColor = isOvertime ? 'var(--danger)' : (state.bufferActive ? 'var(--accent2)' : (paused ? 'var(--accent2)' : 'var(--active-light)'));
   const fill = document.getElementById('progress-fill');
-  if (fill) fill.style.width = `${pct}%`;
+  if (fill) { fill.style.width = `${pct}%`; fill.style.background = fillColor; }
   const stripe = document.getElementById('progress-stripe');
-  if (stripe) stripe.style.width = `${pct}%`;
+  if (stripe) { stripe.style.width = `${pct}%`; stripe.style.background = fillColor; }
   const bufDisp = document.getElementById('buffer-display');
   if (bufDisp) bufDisp.textContent = fmtMs(state.bufferRemainingMs);
   updateBadge();
@@ -1461,7 +1508,17 @@ document.getElementById('authBtn').addEventListener('click', function() {
 });
 
 document.addEventListener('visibilitychange', function() {
-  if (document.visibilityState === 'hidden' && cloudState.user) void saveTimerState();
+  if (document.visibilityState === 'hidden') {
+    hiddenAt = Date.now();
+    if (cloudState.user) void saveTimerState();
+  } else {
+    if (hiddenAt !== null && state.running) {
+      applyElapsedTime(Date.now() - hiddenAt);
+    }
+    hiddenAt = null;
+    lastTick = null;
+    render();
+  }
 });
 
 window.addEventListener('beforeunload', function() {
