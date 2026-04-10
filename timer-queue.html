@@ -305,6 +305,30 @@
   @keyframes urgentBlink { 0%,100% { opacity: 1; } 50% { opacity: 0.25; } }
   .urgent-anim { animation: urgentBlink 1s ease-in-out infinite; color: var(--danger) !important; }
 
+  .overtime { color: var(--danger) !important; }
+
+  .sync-section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 8px 16px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 4px;
+    font-size: 13px;
+  }
+  .sync-section.connected { border-color: var(--active); }
+  .sync-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--text3); flex-shrink: 0;
+  }
+  .sync-dot.waiting { background: var(--accent2); }
+  .sync-dot.connected { background: var(--active); }
+  .sync-label { font-family: var(--mono); font-size: 10px; letter-spacing: 0.15em; text-transform: uppercase; color: var(--text3); }
+  .sync-section.connected .sync-label { color: var(--active); }
+  .sync-actions { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+
   .timer-ms { font-size: 0.45em; opacity: 0.55; vertical-align: baseline; }
 
   .buffer-section {
@@ -362,11 +386,14 @@ const state = {
   bufferTotalMs: 89000,
   bufferRemainingMs: 89000,
   bufferActive: false,
-  editingBuffer: false
+  editingBuffer: false,
+  slideSyncEnabled: false,
+  slideSyncConnected: false
 };
 
 let rafId = null;
 let lastTick = null;
+let syncChannel = null;
 
 function getCloudConfig() {
   const config = window.XVB8_CLOUD_CONFIG || {};
@@ -564,7 +591,11 @@ function syncCurrentBounds() {
   }
   state.current = Math.min(Math.max(state.current, 0), state.timers.length - 1);
   const currentTimer = state.timers[state.current];
-  state.elapsedMs = Math.min(Math.max(state.elapsedMs, 0), Math.max(currentTimer.seconds * 1000 - 1, 0));
+  if (!state.slideSyncEnabled) {
+    state.elapsedMs = Math.min(Math.max(state.elapsedMs, 0), Math.max(currentTimer.seconds * 1000 - 1, 0));
+  } else {
+    state.elapsedMs = Math.max(state.elapsedMs, 0);
+  }
   if (state.done) {
     state.current = state.timers.length - 1;
     state.elapsedMs = 0;
@@ -727,6 +758,14 @@ function runLoop(ts) {
   state.elapsedMs += delta;
   const totalMs = cur.seconds * 1000;
   if (state.elapsedMs >= totalMs) {
+    if (state.slideSyncEnabled) {
+      // Slide sync active: don't auto-advance, let timer run into overtime
+      // Beep once when first crossing the boundary
+      if (state.elapsedMs - delta < totalMs) beep();
+      updateActiveDisplay();
+      rafId = requestAnimationFrame(runLoop);
+      return;
+    }
     beep();
     state.elapsedMs = 0;
     if (state.current >= state.timers.length - 1) {
@@ -765,12 +804,20 @@ function updateActiveDisplay() {
   if (!cur) return;
   const totalMs = cur.seconds * 1000;
   const remainingMs = totalMs - state.elapsedMs;
-  const pct = (state.elapsedMs / totalMs) * 100;
+  const isOvertime = remainingMs < 0;
+  const pct = Math.min((state.elapsedMs / totalMs) * 100, 100);
   const disp = document.getElementById('timer-display');
   if (disp) {
-    disp.innerHTML = fmtMsHtml(remainingMs);
-    if (remainingMs <= 10000 && remainingMs > 0) disp.classList.add('urgent-anim');
-    else disp.classList.remove('urgent-anim');
+    if (isOvertime) {
+      disp.innerHTML = '-' + fmtMsHtml(-remainingMs);
+      disp.classList.remove('urgent-anim');
+      disp.classList.add('overtime');
+    } else {
+      disp.innerHTML = fmtMsHtml(remainingMs);
+      disp.classList.remove('overtime');
+      if (remainingMs <= 10000 && remainingMs > 0) disp.classList.add('urgent-anim');
+      else disp.classList.remove('urgent-anim');
+    }
   }
   const fill = document.getElementById('progress-fill');
   if (fill) fill.style.width = `${pct}%`;
@@ -909,6 +956,90 @@ function saveEditBuffer() {
 function cancelEditBuffer() {
   state.editingBuffer = false;
   render();
+}
+
+/* ── Google Slides Sync ── */
+
+const SLIDES_SNIPPET = `(function(){var c=new BroadcastChannel('timer-queue-sync'),m={},idx=0;function scan(){try{document.querySelectorAll('[class*="punch-filmstrip"] [aria-roledescription="slide"]').forEach(function(el,i){var a=el.getAttribute('aria-label')||'';m[a]=i;});if(Object.keys(m).length)console.log('[TimerSync] Found',Object.keys(m).length,'slides')}catch(e){}}function getIdx(){var h=location.hash.match(/slide=id\\.([\\w_-]+)/);if(h&&m[h[1]]!==undefined)return m[h[1]];var thumbs=document.querySelectorAll('[class*="punch-filmstrip"] [aria-roledescription="slide"]');for(var i=0;i<thumbs.length;i++){if(thumbs[i].matches('[tabindex="0"],.hasFocus,[aria-selected="true"]'))return i}return idx}scan();c.postMessage({type:'hello'});idx=getIdx();c.postMessage({type:'slideChange',slideIndex:idx});console.log('[TimerSync] Connected — slide',idx+1);window.addEventListener('hashchange',function(){idx=getIdx();c.postMessage({type:'slideChange',slideIndex:idx});console.log('[TimerSync] Slide',idx+1)});new MutationObserver(function(){var n=getIdx();if(n!==idx){idx=n;c.postMessage({type:'slideChange',slideIndex:idx});console.log('[TimerSync] Slide',idx+1)}}).observe(document.body,{subtree:true,attributes:true,attributeFilter:['class','aria-selected','tabindex']});console.log('[TimerSync] Listening for slide changes…')})();`;
+
+function initSlideSync() {
+  if (syncChannel) syncChannel.close();
+  state.slideSyncEnabled = true;
+  state.slideSyncConnected = false;
+  syncChannel = new BroadcastChannel('timer-queue-sync');
+  syncChannel.onmessage = function(e) {
+    const data = e.data;
+    if (!data || typeof data !== 'object') return;
+    if (data.type === 'hello') {
+      state.slideSyncConnected = true;
+      render();
+      return;
+    }
+    if (data.type === 'slideChange' && typeof data.slideIndex === 'number') {
+      state.slideSyncConnected = true;
+      handleSlideChange(data.slideIndex);
+    }
+  };
+  render();
+}
+
+function stopSlideSync() {
+  state.slideSyncEnabled = false;
+  state.slideSyncConnected = false;
+  if (syncChannel) { syncChannel.close(); syncChannel = null; }
+  render();
+}
+
+function toggleSlideSync() {
+  if (state.slideSyncEnabled) stopSlideSync();
+  else initSlideSync();
+}
+
+function copySyncSnippet() {
+  navigator.clipboard.writeText(SLIDES_SNIPPET).then(function() {
+    const btn = document.getElementById('copy-snippet-btn');
+    if (btn) { btn.textContent = '✓ Copied'; setTimeout(function() { btn.textContent = '📋 Copy snippet'; }, 1500); }
+  });
+}
+
+function handleSlideChange(targetIndex) {
+  if (state.done && targetIndex < state.timers.length) {
+    state.done = false;
+  }
+  if (!state.timers.length) return;
+  targetIndex = Math.max(0, Math.min(targetIndex, state.timers.length - 1));
+  if (targetIndex === state.current) return;
+
+  if (targetIndex > state.current) {
+    // Forward: bank or draw buffer for each skipped timer
+    for (let i = state.current; i < targetIndex; i++) {
+      const timer = state.timers[i];
+      if (!timer) continue;
+      const elapsed = (i === state.current) ? state.elapsedMs : 0;
+      const remainingMs = timer.seconds * 1000 - elapsed;
+      if (remainingMs > 0) {
+        // Finished early — bank remaining time
+        state.bufferRemainingMs += remainingMs;
+      } else if (remainingMs < 0) {
+        // Went overtime — draw from buffer
+        state.bufferRemainingMs = Math.max(0, state.bufferRemainingMs + remainingMs);
+      }
+    }
+  }
+  // Backward: just rewind, no buffer change
+
+  state.current = targetIndex;
+  state.elapsedMs = 0;
+  state.bufferActive = false;
+  if (!state.running) {
+    state.running = true;
+    lastTick = null;
+    rafId = requestAnimationFrame(runLoop);
+  } else {
+    lastTick = null;
+  }
+  render();
+  void saveTimerState();
 }
 
 async function deleteTimer(id) {
@@ -1187,17 +1318,21 @@ function render() {
     </div>`;
   } else if (cur) {
     const paused = !state.running;
-    const fillColor = state.bufferActive ? 'var(--accent2)' : (paused ? 'var(--accent2)' : 'var(--active-light)');
-    const activeLabel = state.bufferActive ? '⏳ buffer active' : (state.running ? 'now running' : 'paused');
+    const isOvertime = remainingMs < 0;
+    const fillColor = isOvertime ? 'var(--danger)' : (state.bufferActive ? 'var(--accent2)' : (paused ? 'var(--accent2)' : 'var(--active-light)'));
+    const activeLabel = isOvertime ? '⏱ overtime' : (state.bufferActive ? '⏳ buffer active' : (state.running ? 'now running' : 'paused'));
+    const clampedPct = Math.min(pct, 100);
+    const timerHtml = isOvertime ? ('-' + fmtMsHtml(-remainingMs)) : fmtMsHtml(remainingMs);
+    const timerClass = isOvertime ? ' class="overtime"' : (remainingMs <= 10000 && remainingMs > 0 && state.running ? ' class="urgent-anim"' : '');
     html = `<div class="active-card">
-      <div id="progress-stripe" style="position:absolute;top:0;left:0;height:2px;background:${fillColor};width:${pct}%"></div>
+      <div id="progress-stripe" style="position:absolute;top:0;left:0;height:2px;background:${fillColor};width:${clampedPct}%"></div>
       <div class="active-label">${activeLabel}</div>
       <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:1.25rem;">
         <div class="active-title" style="margin-bottom:0;">${esc(cur.title)}</div>
         <button class="row-btn" onclick="startEditActive()" title="Edit this timer" style="opacity:0.5;font-size:13px;padding:4px 8px;flex-shrink:0;">✎ edit</button>
       </div>
-      <div id="timer-display"${remainingMs <= 10000 && remainingMs > 0 && state.running ? ' class="urgent-anim"' : ''}>${fmtMsHtml(remainingMs)}</div>
-      <div class="progress-bar"><div id="progress-fill" style="width:${pct}%;background:${fillColor}"></div></div>
+      <div id="timer-display"${timerClass}>${timerHtml}</div>
+      <div class="progress-bar"><div id="progress-fill" style="width:${clampedPct}%;background:${fillColor}"></div></div>
       <div class="controls">
         ${state.running
           ? '<button class="btn btn-primary" id="play-btn" onclick="pauseTimer()">⏸ Pause</button>'
@@ -1235,6 +1370,22 @@ function render() {
         </div>
       </div>`;
     }
+  }
+
+  // Slide sync section
+  if (!state.done && state.timers.length && !state.editingActive) {
+    const dotClass = state.slideSyncConnected ? 'connected' : (state.slideSyncEnabled ? 'waiting' : '');
+    const sectionClass = state.slideSyncConnected ? ' connected' : '';
+    const statusText = state.slideSyncConnected ? 'Connected to Google Slides' : (state.slideSyncEnabled ? 'Waiting for Slides…' : 'Slides sync off');
+    html += `<div class="sync-section${sectionClass}">
+      <span class="sync-dot ${dotClass}"></span>
+      <span class="sync-label">slides sync</span>
+      <span style="font-size:12px;color:var(--text3);">${statusText}</span>
+      <div class="sync-actions">
+        ${state.slideSyncEnabled ? '<button class="btn" id="copy-snippet-btn" onclick="copySyncSnippet()" style="font-size:11px;padding:4px 10px;" title="Copy the Google Slides console snippet to clipboard">📋 Copy snippet</button>' : ''}
+        <button class="btn${state.slideSyncEnabled ? ' btn-primary' : ''}" onclick="toggleSlideSync()" style="font-size:12px;padding:5px 12px;">${state.slideSyncEnabled ? '■ Stop' : '▶ Sync'}</button>
+      </div>
+    </div>`;
   }
 
   const afterRemaining = state.timers.slice(state.current + 1).reduce((sum, timer) => sum + timer.seconds, 0);
