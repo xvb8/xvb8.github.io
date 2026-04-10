@@ -874,7 +874,7 @@ function updateActiveDisplay() {
     }
   }
   const paused = !state.running;
-  const fillColor = isOvertime ? 'var(--danger)' : (state.bufferActive ? 'var(--accent2)' : (paused ? 'var(--accent2)' : 'var(--active-light)'));
+  const fillColor = isOvertime ? 'var(--danger)' : (state.bufferActive ? 'var(--accent2)' : 'var(--active-light)');
   const fill = document.getElementById('progress-fill');
   if (fill) { fill.style.width = `${pct}%`; fill.style.background = fillColor; }
   const stripe = document.getElementById('progress-stripe');
@@ -1379,7 +1379,7 @@ function render() {
   } else if (cur) {
     const paused = !state.running;
     const isOvertime = remainingMs < 0;
-    const fillColor = isOvertime ? 'var(--danger)' : (state.bufferActive ? 'var(--accent2)' : (paused ? 'var(--accent2)' : 'var(--active-light)'));
+    const fillColor = isOvertime ? 'var(--danger)' : (state.bufferActive ? 'var(--accent2)' : 'var(--active-light)');
     const activeLabel = isOvertime ? (state.slideSyncEnabled ? '⏳ drawing from buffer' : '⏱ overtime') : (state.bufferActive ? '⏳ buffer active' : (state.running ? 'now running' : 'paused'));
     const clampedPct = Math.min(pct, 100);
     const timerHtml = isOvertime ? (state.slideSyncEnabled ? fmtMsHtml(0) : ('-' + fmtMsHtml(-remainingMs))) : fmtMsHtml(remainingMs);
